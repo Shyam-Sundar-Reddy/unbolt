@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Shyam-Sundar-Reddy/unbolt/main/docs/logo-wordmark-dark.svg">
-  <img src="https://raw.githubusercontent.com/Shyam-Sundar-Reddy/unbolt/main/docs/logo-wordmark-light.svg" alt="unbolt" height="60">
-</picture>
+# unbolt
 
 [![Tests](https://github.com/Shyam-Sundar-Reddy/unbolt/actions/workflows/ci.yml/badge.svg)](https://github.com/Shyam-Sundar-Reddy/unbolt/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -18,8 +15,7 @@ Java types with a written reason for every candidate, and generates
 deterministic code with full traceability back to the source line.
 
 **Status:** early scaffold. Package metadata, license, and CI/CD are set
-up; the parser, DSL, and mapping engine haven't been built yet. See
-[docs/goal.md](docs/goal.md) for the full design and phase plan.
+up; the parser, DSL, and mapping engine haven't been built yet.
 
 ## Install
 
@@ -31,6 +27,5 @@ pip install unbolt
 
 ## Docs
 
-- [docs/goal.md](docs/goal.md) — why, architecture, phases, open questions
 - [CLAUDE.md](CLAUDE.md) — how an AI assistant should work in this repo
 - [LICENSE](LICENSE) — Apache-2.0
