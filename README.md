@@ -24,8 +24,3 @@ Not yet published to PyPI. Once released:
 ```bash
 pip install unbolt
 ```
-
-## Docs
-
-- [CLAUDE.md](CLAUDE.md) — how an AI assistant should work in this repo
-- [LICENSE](LICENSE) — Apache-2.0
