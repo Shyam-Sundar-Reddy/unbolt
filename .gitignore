@@ -14,5 +14,8 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 
-# Design docs and logo kept local for now, not shared publicly yet
-docs/
+# Design docs kept local for now, not shared publicly yet; logo stays tracked
+docs/*
+!docs/logo.svg
+!docs/logo-wordmark-light.svg
+!docs/logo-wordmark-dark.svg

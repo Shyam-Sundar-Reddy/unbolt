@@ -1,4 +1,7 @@
-# unbolt
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Shyam-Sundar-Reddy/unbolt/main/docs/logo-wordmark-dark.svg">
+  <img src="https://raw.githubusercontent.com/Shyam-Sundar-Reddy/unbolt/main/docs/logo-wordmark-light.svg" alt="unbolt" height="60">
+</picture>
 
 [![Tests](https://github.com/Shyam-Sundar-Reddy/unbolt/actions/workflows/ci.yml/badge.svg)](https://github.com/Shyam-Sundar-Reddy/unbolt/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
