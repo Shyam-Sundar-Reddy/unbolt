@@ -1,0 +1,137 @@
+{
+  "roots": [
+    {
+      "byte_size": 25,
+      "children": [
+        {
+          "byte_size": 16,
+          "children": [
+            {
+              "byte_size": 8,
+              "children": [],
+              "digits": 8,
+              "level": 10,
+              "name": "ORDER-ID",
+              "occurs": null,
+              "pic": "9(8)",
+              "redefines": null,
+              "scale": 0,
+              "sign_separate": false,
+              "signed": false,
+              "source_line": 4,
+              "usage": "DISPLAY",
+              "value": null
+            },
+            {
+              "byte_size": 8,
+              "children": [
+                {
+                  "byte_size": 4,
+                  "children": [],
+                  "digits": 4,
+                  "level": 15,
+                  "name": "ORDER-YEAR",
+                  "occurs": null,
+                  "pic": "9(4)",
+                  "redefines": null,
+                  "scale": 0,
+                  "sign_separate": false,
+                  "signed": false,
+                  "source_line": 6,
+                  "usage": "DISPLAY",
+                  "value": null
+                },
+                {
+                  "byte_size": 2,
+                  "children": [],
+                  "digits": 2,
+                  "level": 15,
+                  "name": "ORDER-MONTH",
+                  "occurs": null,
+                  "pic": "9(2)",
+                  "redefines": null,
+                  "scale": 0,
+                  "sign_separate": false,
+                  "signed": false,
+                  "source_line": 7,
+                  "usage": "DISPLAY",
+                  "value": null
+                },
+                {
+                  "byte_size": 2,
+                  "children": [],
+                  "digits": 2,
+                  "level": 15,
+                  "name": "ORDER-DAY",
+                  "occurs": null,
+                  "pic": "9(2)",
+                  "redefines": null,
+                  "scale": 0,
+                  "sign_separate": false,
+                  "signed": false,
+                  "source_line": 8,
+                  "usage": "DISPLAY",
+                  "value": null
+                }
+              ],
+              "digits": 0,
+              "level": 10,
+              "name": "ORDER-DATE",
+              "occurs": null,
+              "pic": null,
+              "redefines": null,
+              "scale": 0,
+              "sign_separate": false,
+              "signed": false,
+              "source_line": 5,
+              "usage": "DISPLAY",
+              "value": null
+            }
+          ],
+          "digits": 0,
+          "level": 5,
+          "name": "ORDER-HEADER",
+          "occurs": null,
+          "pic": null,
+          "redefines": null,
+          "scale": 0,
+          "sign_separate": false,
+          "signed": false,
+          "source_line": 3,
+          "usage": "DISPLAY",
+          "value": null
+        },
+        {
+          "byte_size": 9,
+          "children": [],
+          "digits": 9,
+          "level": 5,
+          "name": "ORDER-TOTAL",
+          "occurs": null,
+          "pic": "S9(7)V99",
+          "redefines": null,
+          "scale": 2,
+          "sign_separate": false,
+          "signed": true,
+          "source_line": 9,
+          "usage": "DISPLAY",
+          "value": null
+        }
+      ],
+      "digits": 0,
+      "level": 1,
+      "name": "ORDER-RECORD",
+      "occurs": null,
+      "pic": null,
+      "redefines": null,
+      "scale": 0,
+      "sign_separate": false,
+      "signed": false,
+      "source_line": 2,
+      "usage": "DISPLAY",
+      "value": null
+    }
+  ],
+  "source_file": "nested_groups.cpy",
+  "version": "0"
+}

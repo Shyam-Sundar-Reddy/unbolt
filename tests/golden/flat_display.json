@@ -1,0 +1,71 @@
+{
+  "roots": [
+    {
+      "byte_size": 18,
+      "children": [
+        {
+          "byte_size": 6,
+          "children": [],
+          "digits": 6,
+          "level": 5,
+          "name": "CUSTOMER-ID",
+          "occurs": null,
+          "pic": "9(6)",
+          "redefines": null,
+          "scale": 0,
+          "sign_separate": false,
+          "signed": false,
+          "source_line": 3,
+          "usage": "DISPLAY",
+          "value": null
+        },
+        {
+          "byte_size": 3,
+          "children": [],
+          "digits": 3,
+          "level": 5,
+          "name": "CUSTOMER-AGE",
+          "occurs": null,
+          "pic": "S9(3)",
+          "redefines": null,
+          "scale": 0,
+          "sign_separate": false,
+          "signed": true,
+          "source_line": 4,
+          "usage": "DISPLAY",
+          "value": null
+        },
+        {
+          "byte_size": 9,
+          "children": [],
+          "digits": 9,
+          "level": 5,
+          "name": "ACCOUNT-BALANCE",
+          "occurs": null,
+          "pic": "S9(7)V99",
+          "redefines": null,
+          "scale": 2,
+          "sign_separate": false,
+          "signed": true,
+          "source_line": 5,
+          "usage": "DISPLAY",
+          "value": null
+        }
+      ],
+      "digits": 0,
+      "level": 1,
+      "name": "CUSTOMER-RECORD",
+      "occurs": null,
+      "pic": null,
+      "redefines": null,
+      "scale": 0,
+      "sign_separate": false,
+      "signed": false,
+      "source_line": 2,
+      "usage": "DISPLAY",
+      "value": null
+    }
+  ],
+  "source_file": "flat_display.cpy",
+  "version": "0"
+}
