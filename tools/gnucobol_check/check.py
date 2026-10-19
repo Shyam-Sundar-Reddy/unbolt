@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from unbolt.dsl import Dsl, FieldNode, build_dsl  # noqa: E402
 from unbolt.parser import parse_copybook  # noqa: E402
 
-FIXTURES_DIR = ROOT / "tests" / "fixtures"
+FIXTURES_DIR = ROOT / "fixtures"
 IMAGE = "unbolt-gnucobol-check"
 
 

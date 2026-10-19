@@ -8,7 +8,7 @@ from unbolt.mapping import recommend_mappings
 from unbolt.overrides import Overrides, apply_override
 from unbolt.parser import parse_copybook
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 GOLDEN_DIR = Path(__file__).parent / "golden_codegen"
 FIXTURE_NAMES = [p.stem for p in sorted(FIXTURES_DIR.glob("*.cpy"))]
 

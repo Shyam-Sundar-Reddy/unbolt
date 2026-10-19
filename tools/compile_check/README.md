@@ -1,6 +1,6 @@
 # Compile-check
 
-Generates Go and Java for every `tests/fixtures/*.cpy` and compiles
+Generates Go and Java for every `fixtures/*.cpy` and compiles
 them with real toolchains via Docker (`golang:1.23`, `eclipse-temurin:21-jdk`).
 Dev-only, not wired into CI (phase.md step 8 calls this "optional").
 

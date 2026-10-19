@@ -6,7 +6,7 @@ COBOL stays the documented target dialect; GnuCOBOL is just a free
 compiler we can actually run, used here only to independently verify
 byte sizes via `LENGTH OF`.
 
-What it checks: for every field in every `tests/fixtures/*.cpy`, does
+What it checks: for every field in every `fixtures/*.cpy`, does
 GnuCOBOL's own `LENGTH OF <field>` agree with unbolt's `build_dsl()`
 byte size? This exercises real compiler logic for group/`OCCURS`/
 `REDEFINES` sizing without reading a line of our code.

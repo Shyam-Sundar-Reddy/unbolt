@@ -24,7 +24,7 @@ from unbolt.mapping import recommend_mappings  # noqa: E402
 from unbolt.overrides import Overrides, apply_override  # noqa: E402
 from unbolt.parser import parse_copybook  # noqa: E402
 
-FIXTURES_DIR = ROOT / "tests" / "fixtures"
+FIXTURES_DIR = ROOT / "fixtures"
 
 
 def _overrides_for(name: str) -> Overrides:

@@ -5,7 +5,7 @@ import pytest
 from unbolt.dsl import build_dsl
 from unbolt.parser import parse_copybook
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 FIXTURE_NAMES = [p.stem for p in sorted(FIXTURES_DIR.glob("*.cpy"))]
