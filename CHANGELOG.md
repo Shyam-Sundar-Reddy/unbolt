@@ -5,6 +5,14 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `recommend_mappings()` silently omitted `COMP-1`/`COMP-2` fields from
+  the `MappingReport` instead of flagging them (goal.md §5.4: IBM
+  hexadecimal floating point, not IEEE 754, needs an explicit policy -
+  never silent omission). Caught while building Phase 3's generator,
+  which needed every field to actually appear in the report.
+
 ### Added
 
 - Phase 2 (docs/phase.md): the mapping engine (`src/unbolt/mapping`) -

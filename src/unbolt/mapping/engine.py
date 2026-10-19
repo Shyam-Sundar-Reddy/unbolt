@@ -12,6 +12,7 @@ from unbolt.datatypes import TypeFacts, describe_datatype
 from unbolt.datatypes.sizing import is_alpha_pic
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.exceptions import UnknownTargetError
+from unbolt.mapping.float_rules import float_needs_policy_candidates
 from unbolt.mapping.go_rules import go_decimal_candidates, go_integer_candidates
 from unbolt.mapping.java_rules import java_decimal_candidates, java_integer_candidates
 from unbolt.mapping.model import Candidate, FieldMapping, MappingReport
@@ -39,11 +40,15 @@ def recommend_mappings(dsl: Dsl, target: str) -> MappingReport:
 
     def walk(node: FieldNode, path: str) -> None:
         field_path = f"{path}.{node.name}" if path else node.name
-        if node.pic is not None and not is_alpha_pic(node.pic):
+        candidates: tuple[Candidate, ...] | None = None
+        if node.pic is None and not node.children:
+            # COMP-1/COMP-2: no PIC, no children - an elementary item, not
+            # a group. A real group always has children (see build_dsl).
+            candidates = float_needs_policy_candidates(node.usage)
+        elif node.pic is not None and not is_alpha_pic(node.pic):
             facts: TypeFacts = describe_datatype(node)
-            candidates: tuple[Candidate, ...] = (
-                decimal_rule(facts) if facts.scale > 0 else integer_rule(facts)
-            )
+            candidates = decimal_rule(facts) if facts.scale > 0 else integer_rule(facts)
+        if candidates is not None:
             fields.append(FieldMapping(field_path=field_path, candidates=candidates))
         for child in node.children:
             walk(child, field_path)

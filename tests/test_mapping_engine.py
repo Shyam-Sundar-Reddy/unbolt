@@ -49,6 +49,24 @@ def test_every_field_has_every_candidate_not_just_the_winner() -> None:
     assert "invalid" in statuses  # e.g. uint8/int8 too small for 0..999
 
 
+def test_comp1_and_comp2_get_a_needs_policy_candidate_not_silent_omission() -> None:
+    # goal.md §5.4: IBM hex float, not IEEE 754 - must be flagged, never
+    # silently skipped. Regression test: these fields have no PIC and no
+    # children, which an earlier version of walk() mistook for a group
+    # (same bug shape as the Phase 1 builder.py fix) and dropped entirely.
+    dsl = _dsl(
+        """
+        01  REC.
+            05  S COMP-1.
+            05  D COMP-2.
+        """
+    )
+    report = recommend_mappings(dsl, "go")
+    assert {f.field_path for f in report.fields} == {"REC.S", "REC.D"}
+    for mapping in report.fields:
+        assert [c.status for c in mapping.candidates] == ["needs-policy"]
+
+
 def test_decimal_field_routes_to_decimal_rules_regardless_of_usage() -> None:
     # A DISPLAY field with a scale still needs decimal handling, not just
     # COMP-3 fields - scale, not USAGE, decides the routing.
