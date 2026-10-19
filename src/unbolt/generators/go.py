@@ -88,7 +88,17 @@ def generate_go(dsl: Dsl, resolved: dict[str, str]) -> str:
             type_decls.append(f"type {root_name} {result_type}")
 
     validator_blocks = [_render_validator(v) for v in validators]
-    parts = ["package generated\n"] + type_decls + validator_blocks
+
+    imports = []
+    if validators:
+        imports.append('"fmt"')
+    if any("big.Int" in decl for decl in type_decls):
+        imports.append('"math/big"')
+    header = "package generated\n"
+    if imports:
+        header += "\nimport (\n" + "\n".join(f"\t{imp}" for imp in imports) + "\n)\n"
+
+    parts = [header] + type_decls + validator_blocks
     return "\n\n".join(parts) + "\n"
 
 
