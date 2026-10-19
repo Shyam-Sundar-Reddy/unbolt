@@ -24,3 +24,7 @@ class UnknownTargetError(UnboltError):
 
 class InvalidChoiceError(UnboltError):
     """An override picked a type that wasn't among the field's candidates."""
+
+
+class UnapprovedMappingError(UnboltError):
+    """A field has no override and no valid candidate to default to."""
