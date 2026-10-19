@@ -58,3 +58,12 @@ def justified_not_modeled(line: int) -> Diagnostic:
     return Diagnostic(
         "CBL-I101", "info", "JUSTIFIED detected; preserved as metadata only", line
     )
+
+
+def java_reserved_word_renamed(line: int, original: str, renamed: str) -> Diagnostic:
+    return Diagnostic(
+        "CBL-I102",
+        "info",
+        f"{original!r} collides with a Java reserved word; renamed to {renamed!r} (decision 0003)",
+        line,
+    )
