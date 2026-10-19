@@ -7,6 +7,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Phase 2 (docs/phase.md): the mapping engine (`src/unbolt/mapping`) -
+  Go and Java integer-type ladders (goal.md §5.7's boundary table,
+  cross-language-tested: Java's lack of unsigned types verified to need
+  a wider type than Go for the same field), decimal rules (Go: scaled
+  `int64` per decision 0002, falling back to `string` on overflow; Java:
+  always `BigDecimal`, float/double always rejected). `recommend_mappings()`
+  returns every candidate with a status and rationale, never just a
+  winner. `src/unbolt/overrides`: `apply_override()` stores a developer's
+  type choice apart from the DSL, rejecting a choice that isn't among the
+  field's candidates unless force-flagged. 21 new tests.
 - Phase 1 (docs/phase.md): a real tokenizer, entry/clause parser, and
   level-number tree builder (`src/unbolt/parser`); PIC/USAGE sizing and
   range math for DISPLAY, COMP-3/PACKED-DECIMAL, COMP/COMP-4/BINARY,

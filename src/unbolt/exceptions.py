@@ -16,3 +16,11 @@ class UnsupportedPictureError(UnboltError):
 
 class SchemaVersionError(UnboltError):
     """A serialized DSL's version does not match what was expected."""
+
+
+class UnknownTargetError(UnboltError):
+    """recommend_mappings() was asked for a target with no rule set."""
+
+
+class InvalidChoiceError(UnboltError):
+    """An override picked a type that wasn't among the field's candidates."""
