@@ -5,6 +5,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Phase 3 (docs/phase.md): Go struct and Java POJO code generation
+  (`src/unbolt/generators`) - naming (decision 0003: Java reserved-word
+  collisions auto-suffixed `_` with an info diagnostic), default
+  candidate resolution (decision 0004), `REDEFINES` as two separate
+  fields with a comment since no byte decoder exists yet to need real
+  memory aliasing (decision 0005), Java style POJO (decision 0006).
+  `generate_code(dsl, mapping, target, overrides=...)` ties it
+  together, returning `{path: content}`. Range-validator functions
+  emitted per field whose type is wider than its PIC range.
+  `tools/compile_check`: compiles generated output with real Go/Java
+  toolchains via Docker (dev-only) - caught 3 real bugs (nested Java
+  classes/validators rendered outside their enclosing braces, missing
+  Go imports, missing Java `L` suffix on large `long` literals) that
+  string-matching unit tests missed. 36 new tests (123 total).
+
 ### Fixed
 
 - `recommend_mappings()` silently omitted `COMP-1`/`COMP-2` fields from
