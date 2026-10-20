@@ -10,7 +10,8 @@ rather than unused parameters that would do nothing today.
 
 from unbolt.datatypes import TypeFacts, describe_datatype
 from unbolt.datatypes.sizing import is_alpha_pic
-from unbolt.dsl.schema import Dsl, FieldNode
+from unbolt.dsl.schema import Dsl
+from unbolt.dsl.walk import walk_fields
 from unbolt.exceptions import UnknownTargetError
 from unbolt.mapping.float_rules import float_needs_policy_candidates
 from unbolt.mapping.go_rules import go_decimal_candidates, go_integer_candidates
@@ -37,9 +38,7 @@ def recommend_mappings(dsl: Dsl, target: str) -> MappingReport:
     decimal_rule = _DECIMAL_RULES[target]
 
     fields: list[FieldMapping] = []
-
-    def walk(node: FieldNode, path: str) -> None:
-        field_path = f"{path}.{node.name}" if path else node.name
+    for node, field_path in walk_fields(dsl):
         candidates: tuple[Candidate, ...] | None = None
         if node.pic is None and not node.children:
             # COMP-1/COMP-2: no PIC, no children - an elementary item, not
@@ -50,10 +49,5 @@ def recommend_mappings(dsl: Dsl, target: str) -> MappingReport:
             candidates = decimal_rule(facts) if facts.scale > 0 else integer_rule(facts)
         if candidates is not None:
             fields.append(FieldMapping(field_path=field_path, candidates=candidates))
-        for child in node.children:
-            walk(child, field_path)
-
-    for root in dsl.roots:
-        walk(root, "")
 
     return MappingReport(target=target, fields=tuple(fields))

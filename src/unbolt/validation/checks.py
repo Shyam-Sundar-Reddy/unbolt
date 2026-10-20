@@ -14,7 +14,8 @@ from decimal import Decimal
 
 from unbolt.datatypes import describe_datatype
 from unbolt.datatypes.sizing import is_alpha_pic
-from unbolt.dsl.schema import Dsl, FieldNode
+from unbolt.dsl.schema import Dsl
+from unbolt.dsl.walk import walk_fields
 from unbolt.generators.naming import go_field_name, java_field_name
 from unbolt.mapping.model import MappingReport
 from unbolt.parser.diagnostics import Diagnostic
@@ -66,23 +67,9 @@ def _needs_policy_findings(mapping: MappingReport) -> list[Finding]:
     return findings
 
 
-def _walk(dsl: Dsl) -> list[tuple[FieldNode, str]]:
-    out: list[tuple[FieldNode, str]] = []
-
-    def go(node: FieldNode, path: str) -> None:
-        field_path = f"{path}.{node.name}" if path else node.name
-        out.append((node, field_path))
-        for child in node.children:
-            go(child, field_path)
-
-    for root in dsl.roots:
-        go(root, "")
-    return out
-
-
 def _boundary_and_precision_findings(dsl: Dsl) -> list[Finding]:
     findings = []
-    for node, field_path in _walk(dsl):
+    for node, field_path in walk_fields(dsl):
         if node.pic is None or is_alpha_pic(node.pic):
             continue
         facts = describe_datatype(node)
@@ -118,7 +105,7 @@ def _boundary_and_precision_findings(dsl: Dsl) -> list[Finding]:
 def _completeness_findings(dsl: Dsl, mapping: MappingReport, generated_text: str) -> list[Finding]:
     mapped_paths = {f.field_path for f in mapping.fields}
     findings = []
-    for node, field_path in _walk(dsl):
+    for node, field_path in walk_fields(dsl):
         if field_path not in mapped_paths:
             continue
         go_name = go_field_name(node.name)
