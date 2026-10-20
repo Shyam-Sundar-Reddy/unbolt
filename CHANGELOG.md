@@ -7,6 +7,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Phase 4 (docs/phase.md): `validate_conversion()` (completeness,
+  boundary/precision self-consistency, needs-policy and rolled-up
+  parser diagnostics, all as data - `src/unbolt/validation`) and
+  `build_report()` + `render_markdown()`/`render_json()`
+  (`src/unbolt/reporting`) - a field's source line, chosen type, and
+  the rule/rationale that won are now traceable from one report, not
+  from reading generator code. `docs/diagnostics.md` generated from a
+  new `DIAGNOSTIC_CATALOG` co-located with the diagnostic factory
+  functions. 23 new tests (146 total), including a completeness check
+  across all 5 Phase-0 fixtures x both targets.
 - Phase 3 (docs/phase.md): Go struct and Java POJO code generation
   (`src/unbolt/generators`) - naming (decision 0003: Java reserved-word
   collisions auto-suffixed `_` with an info diagnostic), default
