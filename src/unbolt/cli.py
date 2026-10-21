@@ -79,6 +79,14 @@ def cmd_validate(args: argparse.Namespace) -> None:
         print("no findings")
 
 
+def cmd_mcp(args: argparse.Namespace) -> None:
+    # Lazy import: mcp_server needs fastmcp (the [mcp] extra), which the
+    # base `unbolt` install doesn't require - only paid for if you use it.
+    from unbolt.mcp_server import main as run_mcp_server
+
+    run_mcp_server()
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     dsl = _load_dsl(args.file)
     mapping = recommend_mappings(dsl, args.target)
@@ -120,6 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = add("report", cmd_report, needs_target=True)
     report.add_argument("--format", choices=["md", "json"], default="md")
+
+    mcp_parser = sub.add_parser("mcp")
+    mcp_parser.set_defaults(func=cmd_mcp)
 
     return parser
 

@@ -7,6 +7,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Phase 5 (docs/phase.md): the CLI (`unbolt` entry point,
+  `src/unbolt/cli.py`, stdlib `argparse`) - `parse`, `dsl`, `recommend`,
+  `override`, `generate`, `validate`, `report`, `mcp`. Overrides persist
+  across separate CLI invocations via a JSON file (decision 0007,
+  `.unbolt-overrides.json` by default). The MCP server
+  (`src/unbolt/mcp_server.py`, FastMCP over stdio, behind the new
+  `[mcp]` extra) exposes the same 7 core functions as tools, sharing
+  the same override file with the CLI. `unbolt mcp` lazily imports
+  `fastmcp` so the base install doesn't need the `[mcp]` extra unless
+  actually used. Verified against both live - the CLI by running
+  every command end to end, the MCP server via `fastmcp`'s own
+  in-memory `Client` through a full override -> generate -> validate
+  -> report sequence - before writing either's tests. 21 new tests
+  (170 total).
 - Phase 4 (docs/phase.md): `validate_conversion()` (completeness,
   boundary/precision self-consistency, needs-policy and rolled-up
   parser diagnostics, all as data - `src/unbolt/validation`) and

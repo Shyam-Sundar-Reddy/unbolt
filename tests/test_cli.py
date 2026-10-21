@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from unbolt.cli import main
+from unbolt.cli import build_parser, main
 from unbolt.exceptions import InvalidInputError, UnapprovedMappingError
 from unbolt.overrides import load_overrides
 
@@ -111,6 +111,13 @@ def test_report_happy_path_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["report", FLAT, "--target", "go", "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["target"] == "go"
+
+
+def test_mcp_subcommand_wires_to_cmd_mcp_without_a_file_argument() -> None:
+    # Doesn't actually run the server (that would block on stdio) - just
+    # confirms `unbolt mcp` parses and dispatches correctly.
+    args = build_parser().parse_args(["mcp"])
+    assert args.func.__name__ == "cmd_mcp"
 
 
 def test_report_error_path_unapproved_field(tmp_path: Path) -> None:
