@@ -30,3 +30,11 @@ class FieldMapping:
 class MappingReport:
     target: str
     fields: tuple[FieldMapping, ...]
+
+
+def candidate_names(report: MappingReport, field_path: str) -> tuple[str, ...]:
+    """Every candidate type name for one field, or () if it isn't mapped."""
+    for field in report.fields:
+        if field.field_path == field_path:
+            return tuple(c.type_name for c in field.candidates)
+    return ()

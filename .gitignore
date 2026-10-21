@@ -14,6 +14,9 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 
+# CLI-local artifacts
+.unbolt-overrides.json
+
 # Design docs kept local for now, not shared publicly yet; logo stays tracked
 docs/*
 !docs/logo.svg

@@ -14,6 +14,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
 
+[project.scripts]
+unbolt = "unbolt.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/Shyam-Sundar-Reddy/unbolt"
 Repository = "https://github.com/Shyam-Sundar-Reddy/unbolt"
