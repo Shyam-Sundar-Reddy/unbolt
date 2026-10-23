@@ -28,11 +28,12 @@ clause) is a well-scoped, independent contribution:
 
 1. Add a fixture under `fixtures/` demonstrating it, or extend an
    existing one.
-2. Hand-compute the expected byte size/range and cross-check it against
-   [docs/acceptance-criteria.md](docs/acceptance-criteria.md)'s
-   approach (and, if you have Docker, `tools/gnucobol_check/` — an
-   independent compiler's opinion on your math is worth more than
-   another unit test agreeing with itself).
+2. Hand-compute the expected byte size/range directly from the PIC/USAGE
+   rules in `docs/supported-constructs.md` and `src/unbolt/datatypes/`
+   — write the numbers down before writing the test, the same way the
+   existing fixtures were done. If you have Docker, cross-check it with
+   `tools/gnucobol_check/` too — an independent compiler's opinion on
+   your math is worth more than another unit test agreeing with itself.
 3. Add the parsing/sizing logic and a test per construct, following
    the existing style in `tests/test_parser_constructs.py`.
 4. Update [docs/supported-constructs.md](docs/supported-constructs.md)

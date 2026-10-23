@@ -94,5 +94,5 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (Apache-2.0, `requires-python >=3.12`), CI (`ci.yml`: tests + ruff + mypy)
   and publish (`publish.yml`: PyPI on tag push) workflows, logo and
   wordmark SVGs, README, LICENSE.
-- No parser/DSL/mapping code yet — see [docs/goal.md](docs/goal.md) for
+- No parser/DSL/mapping code yet — see the (local-only) design doc for
   the phase plan.

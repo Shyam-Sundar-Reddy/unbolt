@@ -44,6 +44,20 @@ def _tracked_docs() -> list[Path]:
     return [ROOT / line for line in result.stdout.splitlines() if line]
 
 
+def _is_pushable(path: Path) -> bool:
+    """Exists on disk AND wouldn't be gitignored - a link to a file
+    that's only local (like the internal planning docs) is still a
+    dead link for anyone who doesn't have this exact working copy,
+    which includes a fresh clone and GitHub's own rendering.
+    """
+    if not path.exists():
+        return False
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", str(path)], cwd=ROOT, capture_output=True, check=False
+    )
+    return result.returncode != 0
+
+
 def check_links() -> list[str]:
     errors = []
     for md_path in [ROOT / p for p in _TRACKED_MD] + _tracked_docs():
@@ -54,7 +68,7 @@ def check_links() -> list[str]:
             if target.startswith(("http://", "https://", "#", "mailto:")):
                 continue
             resolved = (md_path.parent / target.split("#")[0]).resolve()
-            if not resolved.exists():
+            if not _is_pushable(resolved):
                 errors.append(f"{md_path.relative_to(ROOT)}: dead link to {target!r}")
     return errors
 

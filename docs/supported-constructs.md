@@ -1,8 +1,8 @@
 # Supported constructs
 
 Status matrix for Phase 1's parser. Dialect: IBM Enterprise COBOL only.
-Default charset: EBCDIC. Default `TRUNC`: `STD`. See
-[decisions/0001](decisions/0001-dialect-charset-trunc-targets.md).
+Default charset: EBCDIC. Default `TRUNC`: `STD` (decision 0001, an
+internal ADR not pushed with this repo).
 
 Legend: **Supported** (parsed, typed, generated) · **Partial** (parsed and
 typed, not generated/mapped yet) · **Diagnostic** (recognized, reported,
