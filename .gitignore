@@ -33,3 +33,4 @@ docs/*
 !docs/performance.md
 !docs/limitations.md
 !docs/index.md
+!docs/cli-demo.gif

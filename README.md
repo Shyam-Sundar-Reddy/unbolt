@@ -19,6 +19,10 @@ deterministic code with full traceability back to the source line.
 
 ## 30-second demo
 
+![unbolt parsing a copybook, recommending a Go type with its rationale, generating code, and tracing the decision — a real terminal recording, not a mockup](https://raw.githubusercontent.com/Shyam-Sundar-Reddy/unbolt/main/docs/cli-demo.gif)
+
+The same copybook in text, for anyone who'd rather read than watch:
+
 ```
 $ cat account.cpy
 01  CUSTOMER-RECORD.

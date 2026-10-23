@@ -1,0 +1,4 @@
+# Build artifacts and cache - regenerate with `npm run check` / `npm run render`.
+# The actual deliverable (the GIF) is committed at docs/cli-demo.gif, not here.
+.hyperframes/
+renders/
