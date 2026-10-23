@@ -7,6 +7,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Phase 6 (docs/phase.md): `estimate_storage()` (`src/unbolt/performance`)
+  - theoretical per-record size, always labeled "estimated", target
+  bytes left as `None` (never guessed) for variable-size types.
+  `run_benchmarks()` - stdlib-only timing harness (not
+  `pytest-benchmark`: not worth a new dependency), records the
+  environment alongside every timing. `docs/performance.md` generated
+  from real runs at 100/1k/10k synthetic field counts plus estimates
+  for the real fixtures, with a dated first measurement and an
+  explicit note on why a CI regression budget isn't wired in yet (no
+  second data point exists to regress against). 15 new tests (185 total).
 - Phase 5 (docs/phase.md): the CLI (`unbolt` entry point,
   `src/unbolt/cli.py`, stdlib `argparse`) - `parse`, `dsl`, `recommend`,
   `override`, `generate`, `validate`, `report`, `mcp`. Overrides persist
