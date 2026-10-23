@@ -45,7 +45,24 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run ruff
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests tools examples
 
       - name: Run mypy
         run: uv run mypy src
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install package with dev extras
+        run: uv sync --extra dev
+
+      - name: Check docs (dead links, generated-doc staleness, example script)
+        run: |
+          uv run python tools/check_docs.py
+          uv run python examples/quickstart.py
