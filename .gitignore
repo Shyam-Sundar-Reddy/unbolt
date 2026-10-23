@@ -31,3 +31,5 @@ docs/*
 !docs/cli.md
 !docs/mcp.md
 !docs/performance.md
+!docs/limitations.md
+!docs/index.md

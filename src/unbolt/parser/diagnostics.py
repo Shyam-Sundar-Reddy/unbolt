@@ -69,6 +69,12 @@ def java_reserved_word_renamed(line: int, original: str, renamed: str) -> Diagno
     )
 
 
+def blank_when_zero_not_modeled(line: int) -> Diagnostic:
+    return Diagnostic(
+        "CBL-I103", "info", "BLANK WHEN ZERO detected; not stored, no behavioral effect", line
+    )
+
+
 def edited_picture_detected(line: int, pic: str) -> Diagnostic:
     return Diagnostic(
         "CBL-W050",
@@ -136,6 +142,12 @@ DIAGNOSTIC_CATALOG: tuple[tuple[str, Severity, str, str], ...] = (
         "A generated Java field name collided with a reserved word and "
         "was renamed with a trailing '_' (decision 0003).",
         "No action needed; the renamed identifier is still traceable via this diagnostic.",
+    ),
+    (
+        "CBL-I103",
+        "info",
+        "BLANK WHEN ZERO was detected; not stored, no behavioral effect.",
+        "No action needed.",
     ),
     (
         "CBL-W050",

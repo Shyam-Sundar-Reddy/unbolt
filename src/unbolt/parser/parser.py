@@ -250,6 +250,7 @@ def _parse_clauses(tokens: list[Token], node: AstNode, diagnostics: list[Diagnos
             continue
 
         if upper == "BLANK":
+            diagnostics.append(diag.blank_when_zero_not_modeled(tokens[i].line))
             i += 1
             if i < n and tokens[i].text.upper() == "WHEN":
                 i += 1

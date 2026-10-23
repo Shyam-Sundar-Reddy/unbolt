@@ -10,6 +10,8 @@ _SAMPLE_DIAGNOSTICS = (
     diag.synchronized_not_modeled(1),
     diag.justified_not_modeled(1),
     diag.java_reserved_word_renamed(1, "class", "class_"),
+    diag.blank_when_zero_not_modeled(1),
+    diag.edited_picture_detected(1, "ZZ9"),
 )
 
 

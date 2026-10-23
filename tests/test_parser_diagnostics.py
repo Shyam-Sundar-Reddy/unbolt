@@ -4,6 +4,11 @@ from unbolt.exceptions import InputTooLargeError, InvalidInputError
 from unbolt.parser import parse_copybook
 
 
+def test_blank_when_zero_produces_an_info_diagnostic() -> None:
+    result = parse_copybook("01 X PIC 9(3) BLANK WHEN ZERO.")
+    assert [d.code for d in result.diagnostics] == ["CBL-I103"]
+
+
 def test_level_66_renames_is_a_diagnostic_not_a_node() -> None:
     result = parse_copybook(
         """

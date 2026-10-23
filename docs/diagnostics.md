@@ -10,5 +10,7 @@ Generated from `DIAGNOSTIC_CATALOG` in `src/unbolt/parser/diagnostics.py` by `to
 | `CBL-W030` | warning | OCCURS ... DEPENDING ON is recognized but not supported; the field is treated as not a table (occurs=None). | Use a fixed OCCURS n instead, or model the maximum size explicitly. |
 | `CBL-W040` | warning | A clause token wasn't recognized and was skipped. | Check the clause's spelling/syntax against docs/supported-constructs.md. |
 | `CBL-I100` | info | SYNCHRONIZED was detected; alignment padding is not modeled. | No action needed unless exact byte offsets matter for a future record decoder. |
-| `CBL-I101` | info | JUSTIFIED was detected; preserved as metadata only, no behavioral effect. | No action needed. |
+| `CBL-I101` | info | JUSTIFIED was detected; noted but not stored on FieldNode - no behavioral or sizing effect. | No action needed. |
 | `CBL-I102` | info | A generated Java field name collided with a reserved word and was renamed with a trailing '_' (decision 0003). | No action needed; the renamed identifier is still traceable via this diagnostic. |
+| `CBL-I103` | info | BLANK WHEN ZERO was detected; not stored, no behavioral effect. | No action needed. |
+| `CBL-W050` | warning | An edited picture (Z, *, $, comma, decimal point, +/-, CR/DB) was detected; sized as text width, excluded from numeric mapping. | If you need the real numeric value, use the unedited source field if one exists, or treat this field as display-only text. |
