@@ -17,8 +17,17 @@ wheels/
 # CLI-local artifacts
 .unbolt-overrides.json
 
-# Design docs kept local for now, not shared publicly yet; logo stays tracked
+# Internal planning docs stay local (goal.md, phase.md, agents.md,
+# acceptance-criteria.md, decisions/); reference docs describing real,
+# working functionality are public as of Phase 7.
 docs/*
 !docs/logo.svg
 !docs/logo-wordmark-light.svg
 !docs/logo-wordmark-dark.svg
+!docs/supported-constructs.md
+!docs/dsl-spec.md
+!docs/mapping-rules.md
+!docs/diagnostics.md
+!docs/cli.md
+!docs/mcp.md
+!docs/performance.md
