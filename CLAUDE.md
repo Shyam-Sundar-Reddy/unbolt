@@ -47,15 +47,17 @@ Delivered as a Python package, a CLI and an MCP server. Preserve first, explain 
 - New public function ⇒ add it to `docs/api-reference.md` and the table in GOAL.md section 10.
 - Significant design choice ⇒ add a short ADR in `docs/decisions/NNNN-title.md` (context, decision, consequences).
 
-## Commands (create a Makefile / task runner with these)
-- `make test`   — pytest (unit, golden, boundary)
-- `make lint`   — ruff + mypy
-- `make docs`   — build docs, run doc examples, check links
-- `make bench`  — benchmarks (Phase 6+)
-- `make check`  — lint + test + docs; must pass before saying a phase is done
+## Commands
+No Makefile - `make` isn't reliably available cross-platform (not even
+on this project's own dev machine), and these are already one command
+each via `uv run`:
+- `uv run pytest -q`          — full test suite (unit, golden, boundary, bench correctness)
+- `uv run ruff check src tests tools` — lint
+- `uv run mypy src`           — types (use `python -m mypy` if the direct binary gets blocked by local AV/AppControl policy)
+- `uv run python tools/gen_performance_doc.py` — refresh docs/performance.md (not routine CI; run manually)
 
 ## Definition of done for any change
-Tests added and passing (actually run) · `make check` green · docs + CHANGELOG updated · no silent lossy conversion introduced · core still independent of CLI/MCP · limitations noted honestly.
+Tests added and passing (actually run) · ruff + mypy clean · docs + CHANGELOG updated · no silent lossy conversion introduced · core still independent of CLI/MCP · limitations noted honestly.
 
 ## Out of scope unless GOAL.md is updated first
 Microservice decomposition, Kafka/Avro, full COBOL language coverage, executing user-provided code.

@@ -49,6 +49,23 @@ def test_every_field_has_every_candidate_not_just_the_winner() -> None:
     assert "invalid" in statuses  # e.g. uint8/int8 too small for 0..999
 
 
+def test_level_88_condition_name_is_excluded_from_mapping_entirely() -> None:
+    # Regression: level 88 has no PIC and no children, the same shape
+    # engine.py uses to detect COMP-1/COMP-2 - without an explicit
+    # level == 88 check it wrongly got a "needs a float policy"
+    # candidate instead of being skipped as pure metadata.
+    dsl = _dsl(
+        """
+        01  REC.
+            05  STATUS-FLAG PIC X(1).
+                88  IS-ACTIVE VALUE 'Y'.
+            05  AGE PIC 9(3).
+        """
+    )
+    report = recommend_mappings(dsl, "go")
+    assert {f.field_path for f in report.fields} == {"REC.AGE"}
+
+
 def test_comp1_and_comp2_get_a_needs_policy_candidate_not_silent_omission() -> None:
     # goal.md §5.4: IBM hex float, not IEEE 754 - must be flagged, never
     # silently skipped. Regression test: these fields have no PIC and no

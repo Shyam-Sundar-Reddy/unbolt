@@ -14,7 +14,7 @@ never silently converted) · **Unsupported** (not recognized in Phase 1).
 |---|---|---|
 | Level `01`–`49` | Supported | hierarchy: groups (have children) vs elementary items (have a PIC) |
 | Level `77` | Supported | standalone item, no parent record |
-| Level `88` | Supported | condition name; metadata only, no storage |
+| Level `88` | Partial | recognized as a non-storage node and excluded from mapping (no false type assigned); the `VALUE` literal itself isn't extracted (`FieldNode.value` is always `None`) |
 | Level `66` (`RENAMES`) | Diagnostic | recognized, reported as unsupported |
 | `OCCURS n` | Supported | fixed repetition |
 | `OCCURS … DEPENDING ON` | Diagnostic | variable-length table, detected and reported |

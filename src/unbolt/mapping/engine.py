@@ -40,6 +40,12 @@ def recommend_mappings(dsl: Dsl, target: str) -> MappingReport:
     fields: list[FieldMapping] = []
     for node, field_path in walk_fields(dsl):
         candidates: tuple[Candidate, ...] | None = None
+        if node.level == 88:
+            # A condition name, not a typed field - no storage, no PIC
+            # that means anything, nothing to map. Without this check it
+            # falls into the pic-is-None-no-children branch below and
+            # wrongly gets a "needs a float policy" candidate.
+            continue
         if node.pic is None and not node.children:
             # COMP-1/COMP-2: no PIC, no children - an elementary item, not
             # a group. A real group always has children (see build_dsl).
