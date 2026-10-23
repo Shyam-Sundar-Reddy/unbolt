@@ -69,6 +69,16 @@ def java_reserved_word_renamed(line: int, original: str, renamed: str) -> Diagno
     )
 
 
+def edited_picture_detected(line: int, pic: str) -> Diagnostic:
+    return Diagnostic(
+        "CBL-W050",
+        "warning",
+        f"{pic!r} is an edited picture (display-formatting symbols); "
+        "treated as text width, excluded from numeric mapping",
+        line,
+    )
+
+
 # (code, severity, meaning, how to fix) - one row per factory function
 # above. docs/diagnostics.md is generated from this, not hand-written
 # (tools/gen_diagnostics_doc.py); keep it next to the functions it
@@ -116,7 +126,8 @@ DIAGNOSTIC_CATALOG: tuple[tuple[str, Severity, str, str], ...] = (
     (
         "CBL-I101",
         "info",
-        "JUSTIFIED was detected; preserved as metadata only, no behavioral effect.",
+        "JUSTIFIED was detected; noted but not stored on FieldNode - "
+        "no behavioral or sizing effect.",
         "No action needed.",
     ),
     (
@@ -125,5 +136,13 @@ DIAGNOSTIC_CATALOG: tuple[tuple[str, Severity, str, str], ...] = (
         "A generated Java field name collided with a reserved word and "
         "was renamed with a trailing '_' (decision 0003).",
         "No action needed; the renamed identifier is still traceable via this diagnostic.",
+    ),
+    (
+        "CBL-W050",
+        "warning",
+        "An edited picture (Z, *, $, comma, decimal point, +/-, CR/DB) "
+        "was detected; sized as text width, excluded from numeric mapping.",
+        "If you need the real numeric value, use the unedited source "
+        "field if one exists, or treat this field as display-only text.",
     ),
 )

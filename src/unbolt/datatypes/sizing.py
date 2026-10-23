@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from unbolt.dsl.schema import FieldNode
 
 _PIC_RUN = re.compile(r"([9AX])(\((\d+)\))?")
+_EDITED_PIC_RUN = re.compile(r"([9AXZ*$,.+\-])(\((\d+)\))?")
+_EDITED_PIC_CHARS = set("Z*$,.+-")
 
 _PACKED_USAGES = {"COMP-3", "PACKED-DECIMAL"}
 _BINARY_TIER_USAGES = {"COMP", "COMP-4", "BINARY", "COMP-5"}
@@ -30,6 +32,32 @@ def is_signed(pic: str) -> bool:
 def is_alpha_pic(pic: str) -> bool:
     upper = pic.upper()
     return "9" not in upper and ("X" in upper or "A" in upper)
+
+
+def is_edited_pic(pic: str) -> bool:
+    """Display-formatting symbols (Z, *, $, comma, decimal point, +/-,
+    CR/DB) - these describe how a value is *shown*, not its value or
+    storage the way 9/V/S do. Treated as text width, never as digits -
+    silently counting them as '9' would produce a wrong digit count.
+    """
+    upper = pic.upper()
+    return any(ch in upper for ch in _EDITED_PIC_CHARS) or "CR" in upper or "DB" in upper
+
+
+def edited_pic_width(pic: str) -> int:
+    """Approximate displayed character width. Exact for the common
+    patterns (Z/9/*/comma/period runs); CR/DB each add 2 for their
+    fixed two-character suffix. Floating currency/sign strings
+    (`$$$,$$9.99`) aren't given special-cased narrower counting -
+    every symbol occurrence just counts as one position, which is
+    always a safe upper bound, never an undercount.
+    """
+    upper = pic.upper()
+    width = sum(
+        int(match.group(3)) if match.group(3) else 1 for match in _EDITED_PIC_RUN.finditer(upper)
+    )
+    width += 2 * upper.count("CR") + 2 * upper.count("DB")
+    return width
 
 
 def parse_pic_digits_scale(pic: str) -> tuple[int, int]:
@@ -100,12 +128,12 @@ def describe_datatype(field: "FieldNode") -> TypeFacts:
     """Compute min/max for an elementary field already sized by build_dsl.
 
     Raises:
-        UnsupportedPictureError: field is a group or an alphanumeric item -
-            neither has a numeric range.
+        UnsupportedPictureError: field is a group, alphanumeric, or an
+            edited picture - none has a numeric range.
     """
-    if field.pic is None or is_alpha_pic(field.pic):
+    if field.pic is None or is_alpha_pic(field.pic) or is_edited_pic(field.pic):
         raise UnsupportedPictureError(
-            f"{field.name}: no numeric range for a group/alphanumeric field"
+            f"{field.name}: no numeric range for a group/alphanumeric/edited-picture field"
         )
     min_value, max_value = numeric_range(
         field.signed, field.digits, field.scale, field.usage, field.byte_size

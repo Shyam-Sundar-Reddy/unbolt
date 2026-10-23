@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from unbolt.datatypes import describe_datatype
-from unbolt.datatypes.sizing import is_alpha_pic
+from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.generators.naming import go_field_name, java_field_name
 
@@ -53,7 +53,7 @@ def generate_java(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
 def _scalar_type_and_validator(
     node: FieldNode, field_path: str, resolved: dict[str, str], validators: list[_Validator]
 ) -> str:
-    if node.pic is not None and is_alpha_pic(node.pic):
+    if node.pic is not None and (is_alpha_pic(node.pic) or is_edited_pic(node.pic)):
         return "String"
     type_name = resolved[field_path]
     if node.pic is not None and type_name not in _UNBOUNDED_TYPES:

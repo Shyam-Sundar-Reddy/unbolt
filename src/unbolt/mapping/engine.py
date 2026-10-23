@@ -9,7 +9,7 @@ rather than unused parameters that would do nothing today.
 """
 
 from unbolt.datatypes import TypeFacts, describe_datatype
-from unbolt.datatypes.sizing import is_alpha_pic
+from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic
 from unbolt.dsl.schema import Dsl
 from unbolt.dsl.walk import walk_fields
 from unbolt.exceptions import UnknownTargetError
@@ -50,7 +50,7 @@ def recommend_mappings(dsl: Dsl, target: str) -> MappingReport:
             # COMP-1/COMP-2: no PIC, no children - an elementary item, not
             # a group. A real group always has children (see build_dsl).
             candidates = float_needs_policy_candidates(node.usage)
-        elif node.pic is not None and not is_alpha_pic(node.pic):
+        elif node.pic is not None and not is_alpha_pic(node.pic) and not is_edited_pic(node.pic):
             facts: TypeFacts = describe_datatype(node)
             candidates = decimal_rule(facts) if facts.scale > 0 else integer_rule(facts)
         if candidates is not None:

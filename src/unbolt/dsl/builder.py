@@ -2,7 +2,9 @@
 
 from unbolt.datatypes.sizing import (
     alpha_byte_size,
+    edited_pic_width,
     is_alpha_pic,
+    is_edited_pic,
     is_signed,
     numeric_byte_size,
     parse_pic_digits_scale,
@@ -28,6 +30,12 @@ def _build_field(node: AstNode) -> FieldNode:
         # byte size doesn't depend on digits (there are none to count).
         digits, scale, signed = 0, 0, False
         byte_size = numeric_byte_size(node.usage, digits, node.sign_separate)
+    elif is_edited_pic(node.pic):
+        # Display-formatting symbols (Z, *, $, comma, ...) - counted as
+        # text width, never as digits (CBL-W050 already diagnosed this
+        # at parse time).
+        digits, scale, signed = 0, 0, False
+        byte_size = edited_pic_width(node.pic)
     elif is_alpha_pic(node.pic):
         digits, scale, signed = 0, 0, False
         byte_size = alpha_byte_size(node.pic)

@@ -32,7 +32,7 @@ never silently converted) · **Unsupported** (not recognized in Phase 1).
 | `DISPLAY` (default, zoned decimal) | Supported | one byte per digit; EBCDIC overpunch sign decoding |
 | `COMP-3` / `PACKED-DECIMAL` | Supported | two digits per byte, sign in the last nibble |
 | `COMP` / `COMP-4` / `BINARY` | Supported | halfword/fullword/doubleword by digit count, `TRUNC(STD)`-limited range |
-| `COMP-5` | Diagnostic | recognized; truncates at native binary size, not PIC digits — different rule from `COMP`/`COMP-4`, not implemented until it's explicitly modeled |
+| `COMP-5` | Supported | same byte-size tiers as `COMP`/`COMP-4`, but range uses the full native binary capacity (not PIC-digit-limited) regardless of `TRUNC` — see decision 0001 |
 | `COMP-1` / `COMP-2` | Partial | parsed and sized (4/8 bytes); flagged "needs explicit policy" since IBM uses hexadecimal floating point, not IEEE 754 |
 | `PIC X(n)` / `PIC A(n)` | Supported | alphanumeric / alphabetic |
 | `PIC N(n)` / `PIC G(n)` (national/DBCS) | Unsupported | not recognized in Phase 1 |
