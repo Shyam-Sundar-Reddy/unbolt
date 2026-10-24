@@ -3,9 +3,59 @@
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.0] - Released 2026-10-24
 
 ### Added
+
+- Phase 7 (docs/phase.md): hardening, docs, CI, demo — the last phase
+  before this release. Reference docs (`supported-constructs.md`,
+  `dsl-spec.md`, `mapping-rules.md`, `diagnostics.md`, `cli.md`,
+  `mcp.md`, `performance.md`) are now public; README rewritten with
+  real captured CLI/library/MCP output (not mocked), an animated
+  terminal demo GIF (`docs/cli-demo.gif`, built with HyperFrames,
+  showing the real `parse → recommend → generate → report` pipeline);
+  `CONTRIBUTING.md`; `examples/quickstart.py` (a runnable version of
+  the README demo, checked in CI); `docs/limitations.md` (an honest
+  gap list, written by actually running the behaviors it describes);
+  `docs/index.md`. New CI docs job (`tools/check_docs.py`, stdlib
+  only): every relative markdown link in tracked docs resolves, and
+  the two fully-reproducible generated docs match their generator's
+  current output.
+- 14 new tests (199 total): docs-check regression tests, the examples
+  smoke test, an edited-picture test suite.
+
+### Fixed
+
+- `supported-constructs.md` had two stale/false claims, caught by
+  actually running the behavior it described rather than rereading the
+  code: `COMP-5` was documented as diagnostic-only but was already
+  fully supported (correct byte-size tier and full binary range);
+  level 88 (condition names) wrongly fell into the same "no PIC, no
+  children" branch `COMP-1`/`COMP-2` uses and got a misleading
+  "needs a float policy" mapping candidate instead of being excluded
+  as pure metadata.
+- Edited `PICTURE` symbols (`Z`, `*`, `$`, `,`, `.`, `+`, `-`, `CR`,
+  `DB`) weren't recognized anywhere — the digit-counting regex only
+  matches `9`/`A`/`X`, so a field like `PIC ZZ,ZZ9.99` silently
+  produced `digits=3` (only the literal `9`s) with no diagnostic at
+  all, a direct violation of the "never silently convert" hard rule.
+  New `CBL-W050` diagnostic; the field is now sized as text width and
+  excluded from numeric mapping, matched at every layer that assumed
+  "has a PIC, isn't alphanumeric" meant numeric (`dsl/builder.py`,
+  `mapping/engine.py`, `datatypes/sizing.py`'s `describe_datatype()`,
+  both generators, `performance/estimate.py`).
+- `BLANK WHEN ZERO` was silently consumed with no diagnostic at all,
+  inconsistent with `JUSTIFIED`'s existing `CBL-I101`. New `CBL-I103`.
+- A real new-developer smoke test (clone fresh, follow only the
+  README) caught two bugs every local run had masked: `uv run pytest`
+  — exactly what `ci.yml` runs — failed on a clean checkout
+  (`ModuleNotFoundError: No module named 'tests'`, fixed with
+  `tests/__init__.py` / `tests/bench/__init__.py`), and three docs
+  links (`CONTRIBUTING.md`, `CHANGELOG.md`, `supported-constructs.md`)
+  only resolved locally, pointing at gitignored files absent from any
+  real clone — `tools/check_docs.py` itself only checked filesystem
+  existence, not whether a link's target would survive a real
+  checkout; fixed to check `git check-ignore` too.
 
 - Phase 6 (docs/phase.md): `estimate_storage()` (`src/unbolt/performance`)
   - theoretical per-record size, always labeled "estimated", target

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "unbolt"
-version = "0.0.1"
+version = "0.1.0"
 description = "Turn COBOL copybooks into a versioned DSL and explainable Go/Java type mappings"
 readme = "README.md"
 requires-python = ">=3.12"

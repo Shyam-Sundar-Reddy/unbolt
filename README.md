@@ -62,8 +62,6 @@ why a field got the type it got, not just what the type is.
 
 ## Install
 
-Not yet published to PyPI. Once released:
-
 ```bash
 pip install unbolt
 pip install "unbolt[mcp]"   # adds the MCP server
