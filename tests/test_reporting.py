@@ -44,6 +44,28 @@ def test_forced_override_traces_to_the_developers_own_reason() -> None:
     assert entry.rationale == "best-effort IEEE754"
 
 
+def test_forced_override_onto_a_rejected_candidate_does_not_self_contradict() -> None:
+    # Regression: UNIT-PRICE's "double" candidate is real, just status
+    # "invalid" - the old lookup matched it by name and reused its own
+    # rejection rationale verbatim, printing double as "chosen" right next
+    # to "rejected by default (hard rule)".
+    dsl = _dsl("01 X PIC S9(9)V99 COMP-3.")
+    mapping = recommend_mappings(dsl, "java")
+    overrides = apply_override(
+        Overrides(), "X", "double", "best-effort", valid_choices=[], force=True
+    )
+    validation = validate_conversion(dsl, mapping, {}, overrides=overrides)
+    report = build_report(dsl, mapping, validation, overrides=overrides)
+
+    (entry,) = report.entries
+    assert entry.chosen_type == "double"
+    assert entry.rule_id == "override-forced"
+    # The developer's own reason leads; the rule engine's rejection is
+    # kept as labeled context, not presented as the acceptance reason.
+    assert entry.rationale.startswith("best-effort (rule engine status: invalid:")
+    assert "rejected by default" in entry.rationale
+
+
 def test_markdown_report_contains_the_field_and_its_rationale() -> None:
     dsl = _dsl("01 X PIC 9(3).")
     mapping = recommend_mappings(dsl, "go")

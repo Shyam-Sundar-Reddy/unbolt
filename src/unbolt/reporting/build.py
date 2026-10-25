@@ -35,13 +35,30 @@ def build_report(
         candidate = next(
             (c for c in candidates_by_path[field_path] if c.type_name == chosen_type), None
         )
-        if candidate is not None:
+        override = override_by_path.get(field_path)
+        if override is not None and candidate is not None and candidate.status != "valid":
+            # A forced override onto a candidate the mapping engine itself
+            # rejected (e.g. Java double for a decimal field) - trace to
+            # the developer's own stated reason, not the rejected
+            # candidate's own rationale. Reusing that rationale here would
+            # self-contradict: it would name this type as "chosen" while
+            # explaining why it was rejected by default.
+            rule_id = "override-forced"
+            rationale = (
+                f"{override.reason} "
+                f"(rule engine status: {candidate.status}: {candidate.rationale})"
+            )
+        elif candidate is not None:
+            # No override (resolve_mapping() only ever defaults to a
+            # status=='valid' candidate), or an override that happens to
+            # match a valid candidate by name.
             rule_id, rationale = candidate.rule_id, candidate.rationale
         else:
             # A forced override whose choice isn't among the field's own
-            # candidates (e.g. COMP-1 -> float32) - trace to the
+            # candidates at all (e.g. COMP-1 -> float32) - trace to the
             # developer's own stated reason instead of a rule.
-            rule_id, rationale = "override", override_by_path[field_path].reason
+            assert override is not None
+            rule_id, rationale = "override", override.reason
         entries.append(
             TraceEntry(
                 field_path=field_path,
