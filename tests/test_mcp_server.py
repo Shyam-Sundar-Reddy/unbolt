@@ -100,6 +100,30 @@ def test_full_override_generate_validate_report_sequence(tmp_path: Path) -> None
     assert "# Conversion report (go)" in report.data
 
 
+def test_update_mapping_override_rejects_an_invalid_status_candidate_without_force(
+    tmp_path: Path,
+) -> None:
+    # Regression: the tool used to build valid_choices from the
+    # unfiltered candidate_names(), so "double" (a real but "invalid"
+    # candidate for UNIT-PRICE under java) silently passed without force.
+    overrides_file = str(tmp_path / "overrides.json")
+
+    async def go():  # type: ignore[no-untyped-def]
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "update_mapping_override",
+                {
+                    "file_path": MIXED, "target": "java",
+                    "field_path": "FINANCIAL-RECORD.UNIT-PRICE",
+                    "choice": "double", "reason": "no",
+                    "overrides_file": overrides_file,
+                },
+            )
+
+    with pytest.raises(Exception, match="not a valid candidate"):
+        _run(go())
+
+
 def test_unknown_tool_raises() -> None:
     async def go():  # type: ignore[no-untyped-def]
         async with Client(mcp) as client:

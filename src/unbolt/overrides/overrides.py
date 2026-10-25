@@ -37,8 +37,10 @@ def apply_override(
         field_path: dot-joined path, e.g. "CUSTOMER-RECORD.CUSTOMER-ID".
         choice: the chosen type name (must match a Candidate.type_name).
         reason: why this choice, for the traceability report.
-        valid_choices: the field's candidate type names, from a
-            MappingReport, used to check `choice` actually exists.
+        valid_choices: the field's status=='valid' candidate type names
+            (e.g. from `mapping.valid_candidate_names()`, not the
+            unfiltered `candidate_names()` - an 'invalid'/'needs-policy'
+            candidate is not an acceptable default choice).
         force: skip the valid_choices check.
     Returns:
         Overrides: a new set with this field's override added/replaced -

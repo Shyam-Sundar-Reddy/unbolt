@@ -10,7 +10,7 @@ from pathlib import Path
 
 from unbolt.dsl import Dsl, build_dsl
 from unbolt.generators import generate_code
-from unbolt.mapping import candidate_names, recommend_mappings
+from unbolt.mapping import recommend_mappings, valid_candidate_names
 from unbolt.overrides import apply_override, load_overrides, save_overrides
 from unbolt.overrides.persistence import DEFAULT_OVERRIDES_PATH
 from unbolt.parser import parse_copybook
@@ -45,7 +45,7 @@ def cmd_recommend(args: argparse.Namespace) -> None:
 
 def cmd_override(args: argparse.Namespace) -> None:
     report = recommend_mappings(_load_dsl(args.file), args.target)
-    valid_choices = candidate_names(report, args.field_path)
+    valid_choices = valid_candidate_names(report, args.field_path)
     overrides = load_overrides(args.overrides_file)
     overrides = apply_override(
         overrides, args.field_path, args.type, args.reason,

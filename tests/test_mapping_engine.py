@@ -2,7 +2,7 @@ import pytest
 
 from unbolt.dsl import build_dsl
 from unbolt.exceptions import UnknownTargetError
-from unbolt.mapping import recommend_mappings
+from unbolt.mapping import candidate_names, recommend_mappings, valid_candidate_names
 from unbolt.parser import parse_copybook
 
 
@@ -93,3 +93,30 @@ def test_decimal_field_routes_to_decimal_rules_regardless_of_usage() -> None:
     type_names = {c.type_name for c in mapping.candidates}
     assert "int64 (scaled)" in type_names
     assert "uint16" not in type_names
+
+
+def test_valid_candidate_names_excludes_invalid_and_needs_policy() -> None:
+    # Regression: candidate_names() returns every status, including
+    # "invalid" (e.g. Java double for a decimal field, rejected by the
+    # never-float-for-decimal hard rule) and "needs-policy" (COMP-1/
+    # COMP-2). apply_override's valid_choices guard must be built from
+    # valid_candidate_names(), not candidate_names(), or an invalid
+    # candidate silently passes the check without --force.
+    dsl = _dsl(
+        """
+        01  REC.
+            05  PRICE PIC S9(9)V99 COMP-3.
+            05  S COMP-1.
+        """
+    )
+    report = recommend_mappings(dsl, "java")
+    all_names = candidate_names(report, "REC.PRICE")
+    valid_names = valid_candidate_names(report, "REC.PRICE")
+    assert "double" in all_names
+    assert "double" not in valid_names
+    assert valid_names == ("BigDecimal",)
+    # A field with zero valid candidates (COMP-1) returns ().
+    assert candidate_names(report, "REC.S") == ("<COMP-1-needs-policy>",)
+    assert valid_candidate_names(report, "REC.S") == ()
+    # An unmapped field path returns () from both.
+    assert valid_candidate_names(report, "REC.NOT-A-FIELD") == ()

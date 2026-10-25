@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 
 from unbolt.dsl import Dsl, build_dsl
 from unbolt.generators import generate_code
-from unbolt.mapping import candidate_names, recommend_mappings
+from unbolt.mapping import recommend_mappings, valid_candidate_names
 from unbolt.overrides import apply_override, load_overrides, save_overrides
 from unbolt.overrides.persistence import DEFAULT_OVERRIDES_PATH
 from unbolt.parser import parse_copybook
@@ -65,7 +65,7 @@ def update_mapping_override(
     overrides = load_overrides(overrides_file)
     overrides = apply_override(
         overrides, field_path, choice, reason,
-        valid_choices=candidate_names(report, field_path), force=force,
+        valid_choices=valid_candidate_names(report, field_path), force=force,
     )
     save_overrides(overrides, overrides_file)
     return {"field_path": field_path, "choice": choice}

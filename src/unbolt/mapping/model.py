@@ -33,8 +33,27 @@ class MappingReport:
 
 
 def candidate_names(report: MappingReport, field_path: str) -> tuple[str, ...]:
-    """Every candidate type name for one field, or () if it isn't mapped."""
+    """Every candidate type name for one field, or () if it isn't mapped.
+
+    Includes `invalid`/`needs-policy` candidates - this is the full fact
+    list, not an acceptance list. Use `valid_candidate_names()` to build
+    `apply_override`'s `valid_choices` guard.
+    """
     for field in report.fields:
         if field.field_path == field_path:
             return tuple(c.type_name for c in field.candidates)
+    return ()
+
+
+def valid_candidate_names(report: MappingReport, field_path: str) -> tuple[str, ...]:
+    """Candidate type names with status == 'valid' for one field.
+
+    Returns () if the field isn't mapped or has no valid candidate - an
+    `invalid`/`needs-policy` candidate (e.g. Java `double` for a decimal
+    field, rejected by the never-float-for-decimal hard rule) is not an
+    acceptable default choice, only a forced (`force=True`) one.
+    """
+    for field in report.fields:
+        if field.field_path == field_path:
+            return tuple(c.type_name for c in field.candidates if c.status == "valid")
     return ()

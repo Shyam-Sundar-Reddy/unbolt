@@ -75,6 +75,24 @@ def test_override_error_path_invalid_choice_without_force(tmp_path: Path) -> Non
         )
 
 
+def test_override_error_path_rejects_an_invalid_status_candidate_without_force(
+    tmp_path: Path,
+) -> None:
+    # Regression: UNIT-PRICE (PIC S9(9)V99 COMP-3) has a "double" candidate
+    # - it's a real candidate in java_decimal_candidates(), just status
+    # "invalid" (rejected by the never-float-for-decimal hard rule). The
+    # old candidate_names() included it in valid_choices regardless of
+    # status, so this override silently succeeded without --force.
+    with pytest.raises(Exception, match="not a valid candidate"):
+        main(
+            [
+                "override", MIXED, "FINANCIAL-RECORD.UNIT-PRICE", "double",
+                "--target", "java", "--reason", "no",
+                "--overrides-file", str(tmp_path / "overrides.json"),
+            ]
+        )
+
+
 def test_generate_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     out_dir = tmp_path / "out"
     assert main(["generate", FLAT, "--target", "go", "-o", str(out_dir)]) == 0
