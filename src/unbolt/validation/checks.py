@@ -13,7 +13,7 @@ two specific bugs already fixed.
 from decimal import Decimal
 
 from unbolt.datatypes import describe_datatype
-from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic
+from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic, is_national_pic
 from unbolt.dsl.schema import Dsl
 from unbolt.dsl.walk import walk_fields
 from unbolt.generators.naming import go_field_name, java_field_name
@@ -101,7 +101,12 @@ def _resolved_mapping_findings(mapping: MappingReport, overrides: Overrides) -> 
 def _boundary_and_precision_findings(dsl: Dsl) -> list[Finding]:
     findings = []
     for node, field_path in walk_fields(dsl):
-        if node.pic is None or is_alpha_pic(node.pic) or is_edited_pic(node.pic):
+        if (
+            node.pic is None
+            or is_alpha_pic(node.pic)
+            or is_edited_pic(node.pic)
+            or is_national_pic(node.pic)
+        ):
             continue
         facts = describe_datatype(node)
         if facts.min_value > facts.max_value:

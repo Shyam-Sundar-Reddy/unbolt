@@ -85,6 +85,17 @@ def edited_picture_detected(line: int, pic: str) -> Diagnostic:
     )
 
 
+def national_picture_detected(line: int, pic: str) -> Diagnostic:
+    return Diagnostic(
+        "CBL-W060",
+        "warning",
+        f"{pic!r} is a national/DBCS picture (PIC N/G); sized as "
+        "double-byte text width, excluded from numeric mapping and "
+        "from Go/Java type generation - no DBCS codec exists",
+        line,
+    )
+
+
 # (code, severity, meaning, how to fix) - one row per factory function
 # above. docs/diagnostics.md is generated from this, not hand-written
 # (tools/gen_diagnostics_doc.py); keep it next to the functions it
@@ -156,5 +167,14 @@ DIAGNOSTIC_CATALOG: tuple[tuple[str, Severity, str, str], ...] = (
         "was detected; sized as text width, excluded from numeric mapping.",
         "If you need the real numeric value, use the unedited source "
         "field if one exists, or treat this field as display-only text.",
+    ),
+    (
+        "CBL-W060",
+        "warning",
+        "A national/DBCS picture (PIC N or PIC G) was detected; sized as "
+        "double-byte text width, excluded from numeric mapping and from "
+        "Go/Java type generation.",
+        "No DBCS codec exists yet. If you need the decoded character "
+        "value, decode it outside unbolt for now.",
     ),
 )

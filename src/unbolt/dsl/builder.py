@@ -5,7 +5,9 @@ from unbolt.datatypes.sizing import (
     edited_pic_width,
     is_alpha_pic,
     is_edited_pic,
+    is_national_pic,
     is_signed,
+    national_pic_width,
     numeric_byte_size,
     parse_pic_digits_scale,
 )
@@ -36,6 +38,11 @@ def _build_field(node: AstNode) -> FieldNode:
         # at parse time).
         digits, scale, signed = 0, 0, False
         byte_size = edited_pic_width(node.pic)
+    elif is_national_pic(node.pic):
+        # National/DBCS (CBL-W060 already diagnosed this at parse time) -
+        # double-byte text width, never digits; no DBCS codec exists.
+        digits, scale, signed = 0, 0, False
+        byte_size = national_pic_width(node.pic)
     elif is_alpha_pic(node.pic):
         digits, scale, signed = 0, 0, False
         byte_size = alpha_byte_size(node.pic)

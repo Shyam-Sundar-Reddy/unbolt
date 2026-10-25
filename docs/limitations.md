@@ -41,15 +41,21 @@ dropped — never silently misconverted:
 - **`BLANK WHEN ZERO`**: detected (info diagnostic `CBL-I103`) but not
   stored anywhere, same as `JUSTIFIED` — no behavioral effect, no
   `FieldNode` field carries it.
-- **PIC `N`/`G`** (national/DBCS) and any other PIC symbol outside
-  `9 S V X A` plus the recognized edited-picture characters: **not
-  validated**. A field using one won't raise an error, and won't be
-  caught by `is_alpha_pic`/`is_edited_pic`/the numeric path cleanly —
-  depending on the exact characters, it risks silently producing a
-  wrong digit count or byte size, the same bug shape fixed for
-  `COMP-1`/`COMP-2`, level 88, and edited pictures this session. Known,
-  not yet fixed. If you hit this, the symptom is a suspiciously small
-  `byte_size` or `digits` for a field that visually has neither.
+- **PIC `N`/`G`** (national/DBCS): recognized (`CBL-W060`), sized as
+  double-byte text width, excluded from numeric mapping and generation
+  (fixed in `0.1.1` — it previously fell through to the numeric path
+  and silently sized as `digits=0`). Not decoded: there's no DBCS
+  character codec, so the field's byte width is correct but its content
+  is never interpreted.
+- **Any other PIC symbol** outside `9 S V X A N G` plus the recognized
+  edited-picture characters: **still not validated**. A field using one
+  won't raise an error and won't be caught by `is_alpha_pic`/
+  `is_edited_pic`/`is_national_pic`/the numeric path cleanly — it risks
+  silently producing a wrong digit count or byte size, the same bug
+  shape fixed for `COMP-1`/`COMP-2`, level 88, edited pictures, and
+  national pictures. Known, not yet fixed. If you hit this, the symptom
+  is a suspiciously small `byte_size` or `digits` for a field that
+  visually has neither.
 
 ## Mapping and code generation
 

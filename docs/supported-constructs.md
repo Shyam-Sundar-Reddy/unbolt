@@ -35,5 +35,5 @@ never silently converted) · **Unsupported** (not recognized in Phase 1).
 | `COMP-5` | Supported | same byte-size tiers as `COMP`/`COMP-4`, but range uses the full native binary capacity (not PIC-digit-limited) regardless of `TRUNC` — see decision 0001 |
 | `COMP-1` / `COMP-2` | Partial | parsed and sized (4/8 bytes); flagged "needs explicit policy" since IBM uses hexadecimal floating point, not IEEE 754 |
 | `PIC X(n)` / `PIC A(n)` | Supported | alphanumeric / alphabetic |
-| `PIC N(n)` / `PIC G(n)` (national/DBCS) | Unsupported | not recognized in Phase 1 |
+| `PIC N(n)` / `PIC G(n)` (national/DBCS) | Diagnostic | recognized, sized as double-byte text width, excluded from numeric mapping and generation; no DBCS codec exists |
 | `SIGN IS SEPARATE` | Supported | adds one byte vs. overpunched sign |

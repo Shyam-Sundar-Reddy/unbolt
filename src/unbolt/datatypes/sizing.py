@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 _PIC_RUN = re.compile(r"([9AX])(\((\d+)\))?")
 _EDITED_PIC_RUN = re.compile(r"([9AXZ*$,.+\-])(\((\d+)\))?")
 _EDITED_PIC_CHARS = set("Z*$,.+-")
+_NATIONAL_PIC_RUN = re.compile(r"([NG])(\((\d+)\))?")
+_NATIONAL_PIC_CHARS = set("NG")
 
 _PACKED_USAGES = {"COMP-3", "PACKED-DECIMAL"}
 _BINARY_TIER_USAGES = {"COMP", "COMP-4", "BINARY", "COMP-5"}
@@ -58,6 +60,25 @@ def edited_pic_width(pic: str) -> int:
     )
     width += 2 * upper.count("CR") + 2 * upper.count("DB")
     return width
+
+
+def is_national_pic(pic: str) -> bool:
+    """`PIC N`/`PIC G` (national/DBCS) - no DBCS codec exists, so these
+    are recognized and sized as double-byte text width, never decoded.
+    """
+    upper = pic.upper()
+    return any(ch in upper for ch in _NATIONAL_PIC_CHARS)
+
+
+def national_pic_width(pic: str) -> int:
+    """Byte width of a national/DBCS picture: 2 bytes per character
+    (goal.md §5.5) - storage width only, never a decoded value.
+    """
+    upper = pic.upper()
+    return 2 * sum(
+        int(match.group(3)) if match.group(3) else 1
+        for match in _NATIONAL_PIC_RUN.finditer(upper)
+    )
 
 
 def parse_pic_digits_scale(pic: str) -> tuple[int, int]:
@@ -128,12 +149,19 @@ def describe_datatype(field: "FieldNode") -> TypeFacts:
     """Compute min/max for an elementary field already sized by build_dsl.
 
     Raises:
-        UnsupportedPictureError: field is a group, alphanumeric, or an
-            edited picture - none has a numeric range.
+        UnsupportedPictureError: field is a group, alphanumeric, an
+            edited picture, or a national/DBCS picture - none has a
+            numeric range.
     """
-    if field.pic is None or is_alpha_pic(field.pic) or is_edited_pic(field.pic):
+    if (
+        field.pic is None
+        or is_alpha_pic(field.pic)
+        or is_edited_pic(field.pic)
+        or is_national_pic(field.pic)
+    ):
         raise UnsupportedPictureError(
-            f"{field.name}: no numeric range for a group/alphanumeric/edited-picture field"
+            f"{field.name}: no numeric range for a group/alphanumeric/"
+            "edited-picture/national-picture field"
         )
     min_value, max_value = numeric_range(
         field.signed, field.digits, field.scale, field.usage, field.byte_size

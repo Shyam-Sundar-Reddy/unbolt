@@ -11,7 +11,7 @@ precise one: it doesn't count a Go string header or Java String object
 overhead, only the character content.
 """
 
-from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic
+from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic, is_national_pic
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.generators.resolve import resolve_mapping
 from unbolt.mapping.model import MappingReport
@@ -62,10 +62,12 @@ def _estimate_root(
             for child in node.children:
                 visit(child, f"{path}.{child.name}", effective)
             return
-        if node.pic is not None and (is_alpha_pic(node.pic) or is_edited_pic(node.pic)):
-            # Edited pictures (CBL-W050) are text width, same as alpha -
-            # without this, an edited-pic leaf matches none of these
-            # branches and silently contributes 0 to the total.
+        if node.pic is not None and (
+            is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic)
+        ):
+            # Edited (CBL-W050) and national/DBCS (CBL-W060) pictures are
+            # text width, same as alpha - without this, such a leaf
+            # matches none of these branches and silently contributes 0.
             fields.append(FieldSizeEstimate(path, node.byte_size, string_type, node.byte_size))
             totals.add(node.byte_size * effective)
             return

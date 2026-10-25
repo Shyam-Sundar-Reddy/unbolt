@@ -14,3 +14,4 @@ Generated from `DIAGNOSTIC_CATALOG` in `src/unbolt/parser/diagnostics.py` by `to
 | `CBL-I102` | info | A generated Java field name collided with a reserved word and was renamed with a trailing '_' (decision 0003). | No action needed; the renamed identifier is still traceable via this diagnostic. |
 | `CBL-I103` | info | BLANK WHEN ZERO was detected; not stored, no behavioral effect. | No action needed. |
 | `CBL-W050` | warning | An edited picture (Z, *, $, comma, decimal point, +/-, CR/DB) was detected; sized as text width, excluded from numeric mapping. | If you need the real numeric value, use the unedited source field if one exists, or treat this field as display-only text. |
+| `CBL-W060` | warning | A national/DBCS picture (PIC N or PIC G) was detected; sized as double-byte text width, excluded from numeric mapping and from Go/Java type generation. | No DBCS codec exists yet. If you need the decoded character value, decode it outside unbolt for now. |

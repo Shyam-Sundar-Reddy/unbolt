@@ -9,7 +9,7 @@ VALUE literals are recognized as a clause boundary and skipped (not
 extracted) - no Phase 1 fixture depends on their content.
 """
 
-from unbolt.datatypes.sizing import is_edited_pic
+from unbolt.datatypes.sizing import is_edited_pic, is_national_pic
 from unbolt.exceptions import InputTooLargeError, InvalidInputError
 from unbolt.parser import diagnostics as diag
 from unbolt.parser.ast import AstNode
@@ -169,6 +169,8 @@ def _parse_clauses(tokens: list[Token], node: AstNode, diagnostics: list[Diagnos
                 node.pic = tokens[i].text
                 if is_edited_pic(node.pic):
                     diagnostics.append(diag.edited_picture_detected(tokens[i].line, node.pic))
+                elif is_national_pic(node.pic):
+                    diagnostics.append(diag.national_picture_detected(tokens[i].line, node.pic))
                 i += 1
             continue
 

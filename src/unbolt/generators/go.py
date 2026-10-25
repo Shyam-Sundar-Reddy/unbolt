@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from unbolt.datatypes import describe_datatype
-from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic
+from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic, is_national_pic
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.generators.naming import go_field_name
 
@@ -47,9 +47,12 @@ def generate_go(dsl: Dsl, resolved: dict[str, str]) -> str:
             name = go_field_name(node.name)
             _emit_struct(node, field_path, name)
             return name
-        if node.pic is not None and (is_alpha_pic(node.pic) or is_edited_pic(node.pic)):
-            # Edited pictures (CBL-W050) are display-formatting only -
-            # treated as text, same as a plain alphanumeric field.
+        if node.pic is not None and (
+            is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic)
+        ):
+            # Edited pictures (CBL-W050) and national/DBCS pictures
+            # (CBL-W060) are display-formatting/text only - treated as
+            # text, same as a plain alphanumeric field.
             return "string"
         resolved_type = resolved[field_path]
         # COMP-1/COMP-2 have no PIC, so there's no digit-derived range to
