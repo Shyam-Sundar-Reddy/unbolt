@@ -3,6 +3,36 @@
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - Released 2026-10-25
+
+### Fixed
+
+- `override` silently accepted a candidate the mapping engine itself had
+  already marked `invalid` (e.g. Java `double` for a decimal field,
+  rejected by the never-float-for-decimal hard rule; or an integer type
+  too narrow for the field's range) without `--force`. The guard was
+  built from `candidate_names()`, which returns every candidate
+  regardless of status; new `valid_candidate_names()` (status=='valid'
+  only) is what `cmd_override`/`update_mapping_override` use now.
+- `validate` reported no findings for a field with such an invalid
+  override, because the check only asked "does this field have *any*
+  valid candidate at all" rather than "is what was actually chosen
+  valid." `validate_conversion()` now takes the overrides and checks the
+  resolved choice directly, raising a new `forced-invalid-override`
+  finding when it isn't.
+- The traceability report printed a rejected candidate's own rejection
+  rationale as if it were the acceptance reason — e.g. naming `double`
+  as the chosen type right next to "rejected by default (hard rule)."
+  The report now traces a forced/invalid override to the developer's
+  own stated reason, with the rule engine's verdict kept as labeled
+  context, not disguised as the acceptance rationale.
+- `PIC N(n)`/`PIC G(n)` (national/DBCS) parsed with zero diagnostics and
+  silently sized as `digits=0`/`byte_size=0` — neither `is_alpha_pic` nor
+  `is_edited_pic` recognizes `N`/`G`, so it fell through to the plain
+  numeric path. New diagnostic `CBL-W060`; the field is now sized as
+  double-byte text width and excluded from numeric mapping/generation,
+  same pattern as `CBL-W050` for edited pictures.
+
 ## [0.1.0] - Released 2026-10-24
 
 ### Added
