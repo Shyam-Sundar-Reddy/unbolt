@@ -125,6 +125,32 @@ def test_validate_error_path_unapproved_field(tmp_path: Path) -> None:
         )
 
 
+def test_validate_flags_a_forced_invalid_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression: validate_conversion wasn't given the overrides, so it
+    # only asked "does this field have any valid candidate at all" -
+    # true for UNIT-PRICE (BigDecimal is valid) - and stayed silent even
+    # though the actually-chosen candidate (double) is the hard-rule-
+    # rejected one.
+    overrides_file = str(tmp_path / "overrides.json")
+    for field, choice in (
+        ("FINANCIAL-RECORD.SENSOR-READING", "float32"),
+        ("FINANCIAL-RECORD.PRECISE-READING", "float64"),
+        ("FINANCIAL-RECORD.UNIT-PRICE", "double"),
+    ):
+        main(
+            [
+                "override", MIXED, field, choice, "--target", "java",
+                "--reason", "best-effort", "--force", "--overrides-file", overrides_file,
+            ]
+        )
+    assert main(["validate", MIXED, "--target", "java", "--overrides-file", overrides_file]) == 0
+    out = capsys.readouterr().out
+    assert "forced-invalid-override" in out
+    assert "FINANCIAL-RECORD.UNIT-PRICE" in out
+
+
 def test_report_happy_path_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["report", FLAT, "--target", "go", "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)

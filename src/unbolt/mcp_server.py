@@ -91,7 +91,7 @@ def validate_conversion(
     report = recommend_mappings(dsl, target)
     overrides = load_overrides(overrides_file)
     generated = generate_code(dsl, report, target, overrides=overrides)
-    return asdict(_validate_conversion(dsl, report, generated))
+    return asdict(_validate_conversion(dsl, report, generated, overrides=overrides))
 
 
 @mcp.tool
@@ -106,7 +106,7 @@ def generate_conversion_report(
     mapping = recommend_mappings(dsl, target)
     overrides = load_overrides(overrides_file)
     generated = generate_code(dsl, mapping, target, overrides=overrides)
-    validation = _validate_conversion(dsl, mapping, generated)
+    validation = _validate_conversion(dsl, mapping, generated, overrides=overrides)
     report = build_report(dsl, mapping, validation, overrides=overrides)
     return render_json(report) if format == "json" else render_markdown(report)
 

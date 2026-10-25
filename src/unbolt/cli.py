@@ -72,7 +72,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
     report = recommend_mappings(dsl, args.target)
     overrides = load_overrides(args.overrides_file)
     generated = generate_code(dsl, report, args.target, overrides=overrides)
-    validation = validate_conversion(dsl, report, generated)
+    validation = validate_conversion(dsl, report, generated, overrides=overrides)
     for f in validation.findings:
         print(f"{f.severity:8} {f.code:20} {f.field_path}: {f.message}")
     if not validation.findings:
@@ -92,7 +92,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     mapping = recommend_mappings(dsl, args.target)
     overrides = load_overrides(args.overrides_file)
     generated = generate_code(dsl, mapping, args.target, overrides=overrides)
-    validation = validate_conversion(dsl, mapping, generated)
+    validation = validate_conversion(dsl, mapping, generated, overrides=overrides)
     report = build_report(dsl, mapping, validation, overrides=overrides)
     text = render_json(report) if args.format == "json" else render_markdown(report)
     print(text)

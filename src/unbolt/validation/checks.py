@@ -18,6 +18,7 @@ from unbolt.dsl.schema import Dsl
 from unbolt.dsl.walk import walk_fields
 from unbolt.generators.naming import go_field_name, java_field_name
 from unbolt.mapping.model import MappingReport
+from unbolt.overrides import Overrides
 from unbolt.parser.diagnostics import Diagnostic
 from unbolt.validation.model import Finding, ValidationReport
 
@@ -28,12 +29,13 @@ def validate_conversion(
     generated: dict[str, str],
     *,
     diagnostics: tuple[Diagnostic, ...] = (),
+    overrides: Overrides | None = None,
 ) -> ValidationReport:
     findings: list[Finding] = []
     generated_text = "\n".join(generated.values())
 
     findings.extend(_diagnostic_findings(diagnostics))
-    findings.extend(_needs_policy_findings(mapping))
+    findings.extend(_resolved_mapping_findings(mapping, overrides or Overrides()))
     findings.extend(_boundary_and_precision_findings(dsl))
     findings.extend(_completeness_findings(dsl, mapping, generated_text))
 
@@ -52,16 +54,45 @@ def _diagnostic_findings(diagnostics: tuple[Diagnostic, ...]) -> list[Finding]:
     ]
 
 
-def _needs_policy_findings(mapping: MappingReport) -> list[Finding]:
-    findings = []
+def _resolved_mapping_findings(mapping: MappingReport, overrides: Overrides) -> list[Finding]:
+    """Flag either "nothing fits" or "what was actually chosen doesn't fit".
+
+    A field with no override is checked the old way: does *any* candidate
+    have status 'valid'? A field with an override is checked against what
+    was actually resolved: does the chosen candidate exist and have status
+    'valid'? An override can be forced (decision 0004/overrides.py) onto
+    an 'invalid' or unlisted candidate - that must surface here, not pass
+    silently just because some other, unchosen candidate would have fit.
+    """
+    override_by_path = {e.field_path: e for e in overrides.entries}
+    findings: list[Finding] = []
     for field in mapping.fields:
-        if all(c.status != "valid" for c in field.candidates):
+        override = override_by_path.get(field.field_path)
+        if override is None:
+            if all(c.status != "valid" for c in field.candidates):
+                findings.append(
+                    Finding(
+                        field_path=field.field_path,
+                        code="needs-policy",
+                        severity="warning",
+                        message="no valid candidate; requires an explicit override",
+                    )
+                )
+            continue
+        candidate = next(
+            (c for c in field.candidates if c.type_name == override.choice), None
+        )
+        if candidate is None or candidate.status != "valid":
+            status = candidate.status if candidate is not None else "not-a-candidate"
             findings.append(
                 Finding(
                     field_path=field.field_path,
-                    code="needs-policy",
-                    severity="warning",
-                    message="no valid candidate; requires an explicit override",
+                    code="forced-invalid-override",
+                    severity="error",
+                    message=(
+                        f"override chose {override.choice!r} (status: {status}); "
+                        f"reason given: {override.reason!r}"
+                    ),
                 )
             )
     return findings
