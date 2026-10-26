@@ -22,6 +22,7 @@ def _field(**overrides: object) -> FieldNode:
         redefines=None,
         value=None,
         source_line=1,
+        offset=0,
     )
     defaults.update(overrides)
     return FieldNode(**defaults)  # type: ignore[arg-type]

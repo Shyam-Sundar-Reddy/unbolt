@@ -1,8 +1,13 @@
-# DSL v0 spec
+# DSL v1 spec
 
 Defined in `src/unbolt/dsl/schema.py`. Two frozen, slotted dataclasses —
 immutable: once built, a DSL tree never changes. Mapping decisions and
 overrides (Phase 2) live in separate objects, never mutate these.
+
+**v0 → v1 (Phase 8, ADR 0008)**: added `FieldNode.offset`. `Dsl.from_json()`
+hard-fails (`SchemaVersionError`) on a v0 JSON file — there's no
+migration path, since `offset` has no meaningful default to backfill
+with; re-parse the original copybook with the current version instead.
 
 ## `FieldNode`
 
@@ -24,6 +29,7 @@ One COBOL data item — either a **group** (has `children`, no `pic`) or an
 | `redefines` | `str \| None` | Name of the field this one overlays, or `None` |
 | `value` | `str \| None` | Raw `VALUE` clause text, or the literal for a level-88 condition name |
 | `source_line` | `int` | Line number in the original copybook — the traceability anchor |
+| `offset` | `int` | Byte offset within its immediate parent (0 for a top-level root). An `OCCURS` field's offset is where its *first* occurrence starts — occurrence `i` starts at `offset + i * byte_size`, computed by a decoder, not stored per-occurrence. A `REDEFINES` field shares its target's offset; if it's wider, later siblings' offsets account for the wider extent, not the original's (ADR 0008, Phase 8) |
 | `children` | `tuple[FieldNode, ...]` | Nested items, in source order; empty for elementary items |
 
 ## `Dsl`

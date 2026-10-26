@@ -1,4 +1,9 @@
-"""AST -> DSL: attach digits/scale/byte_size to every field, bottom-up."""
+"""AST -> DSL: attach digits/scale/byte_size to every field, bottom-up,
+then offset to every field, top-down (a field's offset depends on its
+position among its siblings, which byte_size alone doesn't determine).
+"""
+
+import dataclasses
 
 from unbolt.datatypes.sizing import (
     alpha_byte_size,
@@ -16,8 +21,8 @@ from unbolt.parser.ast import AstNode
 from unbolt.parser.parser import ParseResult
 
 
-def build_dsl(parse_result: ParseResult, *, source_file: str, version: str = "0") -> Dsl:
-    roots = tuple(_build_field(node) for node in parse_result.roots)
+def build_dsl(parse_result: ParseResult, *, source_file: str, version: str = "1") -> Dsl:
+    roots = tuple(_assign_offsets(_build_field(node), 0) for node in parse_result.roots)
     return Dsl(version=version, source_file=source_file, roots=roots)
 
 
@@ -65,8 +70,42 @@ def _build_field(node: AstNode) -> FieldNode:
         redefines=node.redefines,
         value=None,
         source_line=node.source_line,
+        offset=0,  # placeholder - _assign_offsets fills in the real value
         children=children,
     )
+
+
+def _assign_offsets(node: FieldNode, base_offset: int) -> FieldNode:
+    """Top-down pass: every field's byte offset within its parent.
+
+    A non-REDEFINES child starts right after the previous one, advancing
+    by its own byte_size * occurs. A REDEFINES child shares the offset
+    of the field it redefines - and, if it's wider, pushes the cursor
+    forward so the *next* sibling doesn't overlap it, mirroring
+    _group_byte_size's "the overlay's footprint grows to fit it" exactly.
+    """
+    children: list[FieldNode] = []
+    cursor = base_offset
+    offset_by_name: dict[str, int] = {}
+    extent_by_name: dict[str, int] = {}
+
+    for child in node.children:
+        size = child.byte_size * (child.occurs or 1)
+        if child.redefines is None:
+            child_offset = cursor
+            offset_by_name[child.name] = child_offset
+            extent_by_name[child.name] = child_offset + size
+            cursor += size
+        else:
+            child_offset = offset_by_name.get(child.redefines, cursor)
+            end = child_offset + size
+            prior_extent = extent_by_name.get(child.redefines, child_offset)
+            if end > prior_extent:
+                cursor += end - prior_extent
+                extent_by_name[child.redefines] = end
+        children.append(_assign_offsets(child, child_offset))
+
+    return dataclasses.replace(node, offset=base_offset, children=tuple(children))
 
 
 def _group_byte_size(children: tuple[FieldNode, ...]) -> int:

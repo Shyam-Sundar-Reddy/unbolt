@@ -18,6 +18,7 @@ def test_field_node_and_dsl_round_trip_through_asdict():
         redefines=None,
         value=None,
         source_line=3,
+        offset=0,
     )
     record = FieldNode(
         name="CUSTOMER-RECORD",
@@ -33,6 +34,7 @@ def test_field_node_and_dsl_round_trip_through_asdict():
         redefines=None,
         value=None,
         source_line=1,
+        offset=0,
         children=(balance,),
     )
     dsl = Dsl(version="0", source_file="flat_display.cpy", roots=(record,))

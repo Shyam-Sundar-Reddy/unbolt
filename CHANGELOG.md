@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Phase 8 (local docs/phase.md), first slice: `FieldNode.offset` — every
+  field's byte offset within its parent, computed in `build_dsl()`
+  alongside `byte_size`/`digits`/`scale` (ADR 0008, in the local
+  `docs/decisions/`). An `OCCURS` field's offset marks where its first
+  occurrence starts; a `REDEFINES` field shares its target's offset and,
+  if wider, pushes later siblings' offsets to cover the real extent —
+  the same math `_group_byte_size` already used for the record's total
+  size, now applied per field. `DSL_VERSION` bumped `"0"` → `"1"`; every
+  golden DSL fixture regenerated with hand-verified offsets. 6 new
+  tests (`tests/test_dsl_offsets.py`), including the REDEFINES-wider-
+  than-its-target case no existing fixture exercised.
+
 ## [0.1.1] - Released 2026-10-25
 
 ### Fixed

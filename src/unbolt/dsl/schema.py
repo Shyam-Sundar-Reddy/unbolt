@@ -10,7 +10,7 @@ from typing import Any
 
 from unbolt.exceptions import SchemaVersionError
 
-DSL_VERSION = "0"
+DSL_VERSION = "1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +30,7 @@ class FieldNode:
     redefines: str | None
     value: str | None
     source_line: int
+    offset: int
     children: tuple["FieldNode", ...] = ()
 
 
@@ -73,5 +74,6 @@ def _field_from_dict(data: dict[str, Any]) -> FieldNode:
         redefines=data["redefines"],
         value=data["value"],
         source_line=data["source_line"],
+        offset=data["offset"],
         children=tuple(_field_from_dict(c) for c in data["children"]),
     )
