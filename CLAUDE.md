@@ -60,4 +60,8 @@ each via `uv run`:
 Tests added and passing (actually run) · ruff + mypy clean · docs + CHANGELOG updated · no silent lossy conversion introduced · core still independent of CLI/MCP · limitations noted honestly.
 
 ## Out of scope unless GOAL.md is updated first
-Microservice decomposition, Kafka/Avro, full COBOL language coverage, executing user-provided code.
+Microservice decomposition, full COBOL language coverage, executing user-provided code,
+Protobuf/JSON-Schema emission, any generation target beyond Go/Java/Avro-as-schema-format.
+(Record decoding, variant/version modeling, and Avro + Schema-Registry integration are now in
+scope — see GOAL.md §7 and phase.md Phases 8-11 — but bounded to exactly what those phases
+describe.)
