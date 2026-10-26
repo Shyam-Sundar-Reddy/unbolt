@@ -18,6 +18,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   golden DSL fixture regenerated with hand-verified offsets. 6 new
   tests (`tests/test_dsl_offsets.py`), including the REDEFINES-wider-
   than-its-target case no existing fixture exercised.
+- Phase 8, second slice: `unbolt.decoding` — `decode_record()` decodes
+  real bytes into real field values for plain `DISPLAY` (zoned decimal)
+  fields, unsigned and signed via EBCDIC overpunch (`cp037` default,
+  explicit override allowed; decision 0010, local `docs/decisions/`),
+  through nested groups and across `REDEFINES`'s shared offsets. A
+  record whose length doesn't match its layout is rejected
+  (`RecordLengthMismatchError`), never best-effort decoded. `COMP`/
+  packed/binary/float, `SIGN IS SEPARATE`, alphanumeric/edited/
+  national, and `OCCURS` fields each raise `UnsupportedDecodeError`
+  rather than guessing — later Phase 8 slices. 17 new tests
+  (`tests/test_decoding_codecs.py`, `tests/test_decoding_record.py`),
+  including a full hand-crafted-bytes decode of two real fixtures
+  compared against hand-computed expected values — the round-trip
+  guarantee (goal.md §7) tested against actual bytes for the first
+  time, not just ranges.
 
 ## [0.1.1] - Released 2026-10-25
 

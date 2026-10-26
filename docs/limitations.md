@@ -8,15 +8,24 @@ trusting, don't just re-read the code.
 
 ## Dialect and real data
 
-- **One dialect, no real byte decoding.** Only IBM Enterprise COBOL's
-  documented rules are modeled (decision 0001). `charset`
-  (`ebcdic`/`ascii`) is accepted as a parameter on `parse_copybook()`
-  but is currently a **no-op** — the parser reads copybook *source
-  text* (always plain text), never actual mainframe *data records*.
-  There is no EBCDIC overpunch-sign decoder yet. You get a correct
-  schema and correct byte-size math; you cannot yet point this tool at
-  a real fixed-width data file and get decoded values out. That's the
-  "record decoder," tracked as Extended scope (goal.md §7).
+- **One dialect.** Only IBM Enterprise COBOL's documented rules are
+  modeled (decision 0001). `charset` (`ebcdic`/`ascii`) is accepted as a
+  parameter on `parse_copybook()` but is currently a **no-op** — the
+  parser reads copybook *source text* (always plain text), never actual
+  mainframe *data records*. Real byte decoding is a separate module
+  (`unbolt.decoding`, Phase 8) with its own, narrower scope (next item).
+- **Record decoding (`unbolt.decoding`, Phase 8) covers DISPLAY only, so
+  far.** `decode_record()` decodes plain `DISPLAY` (zoned decimal)
+  fields — unsigned, and signed via EBCDIC overpunch (`cp037` default,
+  decision 0010) — including through nested groups and `REDEFINES`'s
+  shared offsets. It does **not yet** decode: `COMP`/`COMP-3`/`COMP-5`
+  (packed/binary), `COMP-1`/`COMP-2` (float), `SIGN IS SEPARATE` fields
+  (leading/trailing position isn't tracked anywhere in the DSL —
+  `parser.py` parses it and discards it), alphanumeric/edited/national
+  fields, or `OCCURS` tables — each raises `UnsupportedDecodeError`
+  rather than guessing. A record whose byte length doesn't match its
+  layout is rejected outright (`RecordLengthMismatchError`), never
+  best-effort decoded (decision 0010).
 - **`TRUNC(STD)` only.** `TRUNC(BIN)`/`TRUNC(OPT)` aren't modeled.
   `COMP-5` is the one documented exception (always full binary range,
   per decision 0001) — everything else assumes the safe, PIC-limited
