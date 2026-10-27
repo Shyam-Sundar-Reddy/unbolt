@@ -33,6 +33,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compared against hand-computed expected values — the round-trip
   guarantee (goal.md §7) tested against actual bytes for the first
   time, not just ranges.
+- Phase 8, third slice: `COMP-3`/`PACKED-DECIMAL` decode —
+  `decode_packed()` reads two digits per byte with the sign in the last
+  nibble (same C/D/F convention as DISPLAY overpunch, applied to a
+  whole nibble rather than combined with a digit); an even digit count's
+  standard leading zero-pad nibble is validated, not just skipped. New
+  `datatypes.sizing.is_packed_usage()` so `decoding/record.py` doesn't
+  duplicate the `{"COMP-3", "PACKED-DECIMAL"}` set `numeric_byte_size()`
+  already has. 11 new tests, including `mixed_usage.cpy`'s real
+  `TRANSACTION-COUNT`/`UNIT-PRICE` fields decoded against hand-computed
+  values, and a full end-to-end `decode_record()` mixing `COMP-3` and
+  `DISPLAY` fields in one record.
 
 ## [0.1.1] - Released 2026-10-25
 

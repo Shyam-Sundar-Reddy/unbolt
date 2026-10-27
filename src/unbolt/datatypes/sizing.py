@@ -31,6 +31,11 @@ def is_signed(pic: str) -> bool:
     return pic.upper().startswith("S")
 
 
+def is_packed_usage(usage: str) -> bool:
+    """COMP-3/PACKED-DECIMAL: two digits per byte, sign in the last nibble."""
+    return usage.upper() in _PACKED_USAGES
+
+
 def is_alpha_pic(pic: str) -> bool:
     upper = pic.upper()
     return "9" not in upper and ("X" in upper or "A" in upper)

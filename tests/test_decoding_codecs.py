@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from unbolt.decoding.codecs import decode_display
+from unbolt.decoding.codecs import decode_display, decode_packed
 from unbolt.exceptions import InvalidSignNibbleError, UnsupportedDecodeError
 
 
@@ -69,3 +69,43 @@ def test_non_digit_byte_in_signed_fields_leading_digits_raises() -> None:
 def test_empty_bytes_raises() -> None:
     with pytest.raises(InvalidSignNibbleError, match="empty"):
         decode_display(b"", signed=False, sign_separate=False, scale=0)
+
+
+def test_packed_positive_odd_digit_count() -> None:
+    assert decode_packed(bytes([0x12, 0x3C]), digits=3, scale=0) == Decimal("123")
+
+
+def test_packed_negative_odd_digit_count() -> None:
+    assert decode_packed(bytes([0x12, 0x3D]), digits=3, scale=0) == Decimal("-123")
+
+
+def test_packed_unsigned_zone_f_is_treated_as_positive() -> None:
+    assert decode_packed(bytes([0x12, 0x3F]), digits=3, scale=0) == Decimal("123")
+
+
+def test_packed_even_digit_count_has_a_leading_zero_pad_nibble() -> None:
+    # digits=4 -> byte_size=3 -> 6 nibbles -> 1 pad + 4 digits + 1 sign.
+    assert decode_packed(bytes([0x01, 0x23, 0x4C]), digits=4, scale=0) == Decimal("1234")
+
+
+def test_packed_scale_divides_the_unscaled_value() -> None:
+    assert decode_packed(bytes([0x12, 0x34, 0x5C]), digits=5, scale=2) == Decimal("123.45")
+
+
+def test_packed_zero() -> None:
+    assert decode_packed(bytes([0x0C]), digits=1, scale=0) == Decimal("0")
+
+
+def test_packed_nonzero_pad_nibble_raises() -> None:
+    with pytest.raises(InvalidSignNibbleError, match="pad nibble"):
+        decode_packed(bytes([0x11, 0x23, 0x4C]), digits=4, scale=0)
+
+
+def test_packed_non_digit_nibble_raises() -> None:
+    with pytest.raises(InvalidSignNibbleError, match="non-digit nibble"):
+        decode_packed(bytes([0x1A, 0x3C]), digits=3, scale=0)
+
+
+def test_packed_invalid_sign_nibble_raises() -> None:
+    with pytest.raises(InvalidSignNibbleError, match="sign nibble"):
+        decode_packed(bytes([0x12, 0x3A]), digits=3, scale=0)

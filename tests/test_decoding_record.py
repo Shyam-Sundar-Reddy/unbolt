@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from unbolt.decoding import decode_record
+from unbolt.decoding import decode_packed, decode_record
 from unbolt.dsl import build_dsl
+from unbolt.dsl.walk import walk_fields
 from unbolt.exceptions import RecordLengthMismatchError, UnsupportedDecodeError
 from unbolt.parser import parse_copybook
 
@@ -82,10 +83,66 @@ def test_occurs_field_decode_is_not_supported_yet() -> None:
         decode_record(root, data)
 
 
-def test_comp3_field_decode_is_not_supported_yet() -> None:
+def test_binary_comp_field_decode_is_not_supported_yet() -> None:
+    # mixed_usage's RECORD-ID is PIC 9(5) COMP (binary) - still
+    # unsupported even though COMP-3 (its next sibling) now is.
     root = _root("mixed_usage")
-    with pytest.raises(UnsupportedDecodeError, match="DISPLAY"):
+    with pytest.raises(UnsupportedDecodeError, match="DISPLAY/COMP-3"):
         decode_record(root, bytes(root.byte_size))
+
+
+def test_comp3_fields_in_a_real_fixture_decode_to_hand_computed_values() -> None:
+    # mixed_usage's TRANSACTION-COUNT/UNIT-PRICE are real COMP-3 fields;
+    # RECORD-ID (COMP, binary) ahead of them means a full decode_record()
+    # can't succeed on this fixture yet (binary decode is a later
+    # slice) - so this grounds decode_packed() directly in the real
+    # fixture's own digits/scale/byte_size instead.
+    dsl = build_dsl(
+        parse_copybook((FIXTURES_DIR / "mixed_usage.cpy").read_text()),
+        source_file="mixed_usage.cpy",
+    )
+    by_path = {path: node for node, path in walk_fields(dsl)}
+    transaction_count = by_path["FINANCIAL-RECORD.TRANSACTION-COUNT"]
+    unit_price = by_path["FINANCIAL-RECORD.UNIT-PRICE"]
+    assert (transaction_count.digits, transaction_count.scale, transaction_count.byte_size) == (
+        9,
+        0,
+        5,
+    )
+    assert (unit_price.digits, unit_price.scale, unit_price.byte_size) == (11, 2, 6)
+
+    # TRANSACTION-COUNT = -123456789
+    value = decode_packed(
+        bytes([0x12, 0x34, 0x56, 0x78, 0x9D]),
+        digits=transaction_count.digits,
+        scale=transaction_count.scale,
+    )
+    assert value == Decimal("-123456789")
+
+    # UNIT-PRICE = 123456789.01
+    value = decode_packed(
+        bytes([0x12, 0x34, 0x56, 0x78, 0x90, 0x1C]),
+        digits=unit_price.digits,
+        scale=unit_price.scale,
+    )
+    assert value == Decimal("123456789.01")
+
+
+def test_comp3_record_decodes_end_to_end_through_decode_record() -> None:
+    source = """
+    01  REC.
+        05  A PIC S9(9) COMP-3.
+        05  B PIC 9(3).
+    """
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+    assert root.byte_size == 5 + 3  # A: 9 digits -> 5 bytes; B: DISPLAY 3 bytes
+
+    data = bytes([0x12, 0x34, 0x56, 0x78, 0x9D]) + bytes([0xF0, 0xF4, 0xF2])  # A=-123456789, B=042
+
+    values = decode_record(root, data)
+
+    assert values == {"REC.A": Decimal("-123456789"), "REC.B": Decimal("42")}
 
 
 def test_redefines_siblings_each_decode_their_own_view_of_the_shared_bytes() -> None:
