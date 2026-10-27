@@ -1,7 +1,9 @@
-"""Byte-level decode for DISPLAY (zoned decimal) and COMP-3/PACKED-
-DECIMAL fields (decision 0010: cp037 default EBCDIC code page, explicit
-override allowed). Binary (COMP/COMP-4/COMP-5), SIGN IS SEPARATE, and
-OCCURS/REDEFINES-aware decode are later Phase 8 slices (phase.md).
+"""Byte-level decode for DISPLAY (zoned decimal), COMP-3/PACKED-DECIMAL,
+and COMP/COMP-4/COMP-5/BINARY fields (decision 0010: cp037 default
+EBCDIC code page, explicit override allowed - charset only matters for
+DISPLAY's text/overpunch decode, binary is just bytes). COMP-1/COMP-2
+(float), SIGN IS SEPARATE, and OCCURS/REDEFINES-aware decode are later
+Phase 8 slices (phase.md).
 
 Sign overpunch is a byte-value convention, not a text decode: the last
 digit byte's zone nibble (high 4 bits) carries the sign (0xC = positive,
@@ -131,3 +133,25 @@ def decode_packed(raw: bytes, *, digits: int, scale: int) -> Decimal:
 
     unscaled = int("".join(str(n) for n in real_digits)) if real_digits else 0
     return Decimal(sign * unscaled) / (Decimal(10) ** scale)
+
+
+def decode_binary(raw: bytes, *, signed: bool, scale: int) -> Decimal:
+    """Decode a COMP/COMP-4/COMP-5/BINARY field's raw bytes to its value.
+
+    Mechanically identical for all four usages - decision 0001's COMP-5
+    exception (full native binary range vs. TRUNC(STD)'s PIC-limited
+    range) is a range/validation policy (Phase 2's datatypes/mapping),
+    not a byte-decode difference; every one of them is a plain
+    big-endian two's-complement (signed) or unsigned integer.
+
+    Args: raw (bytes): the field's own bytes - 2/4/8 (halfword/fullword/
+            doubleword, by digit count).
+        signed (bool): whether the PIC has S.
+        scale (int): fractional digit count (the V position).
+    Returns: Decimal: the decoded value, already divided by 10**scale.
+    Example:
+        >>> decode_binary(bytes([0x00, 0x7B]), signed=False, scale=0)
+        Decimal('123')
+    """
+    unscaled = int.from_bytes(raw, byteorder="big", signed=signed)
+    return Decimal(unscaled) / (Decimal(10) ** scale)

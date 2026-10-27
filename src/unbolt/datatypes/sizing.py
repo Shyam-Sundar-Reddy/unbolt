@@ -36,6 +36,12 @@ def is_packed_usage(usage: str) -> bool:
     return usage.upper() in _PACKED_USAGES
 
 
+def is_binary_usage(usage: str) -> bool:
+    """COMP/COMP-4/COMP-5/BINARY: big-endian two's-complement/unsigned
+    integer, 2/4/8 bytes by digit count (decision 0001)."""
+    return usage.upper() in _BINARY_TIER_USAGES
+
+
 def is_alpha_pic(pic: str) -> bool:
     upper = pic.upper()
     return "9" not in upper and ("X" in upper or "A" in upper)

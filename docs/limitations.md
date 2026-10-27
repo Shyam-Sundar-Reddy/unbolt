@@ -14,18 +14,19 @@ trusting, don't just re-read the code.
   parser reads copybook *source text* (always plain text), never actual
   mainframe *data records*. Real byte decoding is a separate module
   (`unbolt.decoding`, Phase 8) with its own, narrower scope (next item).
-- **Record decoding (`unbolt.decoding`, Phase 8) covers DISPLAY and
-  COMP-3 so far.** `decode_record()` decodes plain `DISPLAY` (zoned
+- **Record decoding (`unbolt.decoding`, Phase 8) covers DISPLAY, COMP-3,
+  and binary so far.** `decode_record()` decodes plain `DISPLAY` (zoned
   decimal) fields — unsigned, and signed via EBCDIC overpunch (`cp037`
-  default, decision 0010) — and `COMP-3`/`PACKED-DECIMAL` fields (two
-  digits per byte, sign in the last nibble), including through nested
-  groups and `REDEFINES`'s shared offsets. It does **not yet** decode:
-  `COMP`/`COMP-4`/`COMP-5` (binary), `COMP-1`/`COMP-2` (float), `SIGN IS
-  SEPARATE` fields (leading/trailing position isn't tracked anywhere in
-  the DSL — `parser.py` parses it and discards it), alphanumeric/edited/
-  national fields, or `OCCURS` tables — each raises
-  `UnsupportedDecodeError` rather than guessing. A record whose byte
-  length doesn't match its
+  default, decision 0010); `COMP-3`/`PACKED-DECIMAL` fields (two digits
+  per byte, sign in the last nibble); and `COMP`/`COMP-4`/`COMP-5`/
+  `BINARY` fields (big-endian two's-complement/unsigned integers) — all
+  including through nested groups and `REDEFINES`'s shared offsets. It
+  does **not yet** decode: `COMP-1`/`COMP-2` (float — no safe default,
+  goal.md §5.4), `SIGN IS SEPARATE` fields (leading/trailing position
+  isn't tracked anywhere in the DSL — `parser.py` parses it and discards
+  it), alphanumeric/edited/national fields, or `OCCURS` tables — each
+  raises `UnsupportedDecodeError` rather than guessing. A record whose
+  byte length doesn't match its
   layout is rejected outright (`RecordLengthMismatchError`), never
   best-effort decoded (decision 0010).
 - **`TRUNC(STD)` only.** `TRUNC(BIN)`/`TRUNC(OPT)` aren't modeled.

@@ -1,13 +1,20 @@
 """Decode one record's real bytes into real field values, using the
 FieldNode.offset/byte_size that build_dsl() already computes (ADR 0008).
-Elementary DISPLAY and COMP-3/PACKED-DECIMAL fields are supported;
-groups are walked transparently; anything else (COMP-1/COMP-2, binary,
-alphanumeric/edited/national, OCCURS) raises rather than guessing at a
-decode this slice doesn't implement yet (phase.md Phase 8).
+Elementary DISPLAY, COMP-3/PACKED-DECIMAL, and COMP/COMP-4/COMP-5/
+BINARY fields are supported; groups are walked transparently; anything
+else (COMP-1/COMP-2, alphanumeric/edited/national, OCCURS) raises
+rather than guessing at a decode this slice doesn't implement yet
+(phase.md Phase 8).
 """
 
-from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic, is_national_pic, is_packed_usage
-from unbolt.decoding.codecs import DEFAULT_CODEPAGE, decode_display, decode_packed
+from unbolt.datatypes.sizing import (
+    is_alpha_pic,
+    is_binary_usage,
+    is_edited_pic,
+    is_national_pic,
+    is_packed_usage,
+)
+from unbolt.decoding.codecs import DEFAULT_CODEPAGE, decode_binary, decode_display, decode_packed
 from unbolt.dsl.schema import FieldNode
 from unbolt.exceptions import RecordLengthMismatchError, UnsupportedDecodeError
 
@@ -22,15 +29,16 @@ def decode_record(
             root.byte_size exactly.
         codepage (str): EBCDIC code page; cp037 by default (decision 0010).
     Returns: dict[str, object]: dot-joined field_path -> decoded value,
-        one entry per elementary DISPLAY/COMP-3 field under root (groups
-        aren't included, matching mapping/validation's own convention).
+        one entry per elementary DISPLAY/COMP-3/binary field under root
+        (groups aren't included, matching mapping/validation's own
+        convention).
     Raises:
         RecordLengthMismatchError: len(data) != root.byte_size - rejected
             by default (decision 0010), no best-effort decode in this slice.
-        UnsupportedDecodeError: a field under root isn't a plain DISPLAY
-            or COMP-3/PACKED-DECIMAL elementary item (COMP-1/COMP-2,
-            binary, alphanumeric/edited/national, and OCCURS decode are
-            later Phase 8 slices).
+        UnsupportedDecodeError: a field under root isn't a plain DISPLAY,
+            COMP-3/PACKED-DECIMAL, or COMP/COMP-4/COMP-5/BINARY
+            elementary item (COMP-1/COMP-2, alphanumeric/edited/
+            national, and OCCURS decode are later Phase 8 slices).
     """
     if len(data) != root.byte_size:
         raise RecordLengthMismatchError(
@@ -60,9 +68,13 @@ def _decode_node(
     if is_packed_usage(node.usage):
         values[path] = decode_packed(raw, digits=node.digits, scale=node.scale)
         return
+    if is_binary_usage(node.usage):
+        values[path] = decode_binary(raw, signed=node.signed, scale=node.scale)
+        return
     if node.usage.upper() != "DISPLAY":
         raise UnsupportedDecodeError(
-            f"{path!r}: only DISPLAY/COMP-3 decode is supported in this slice, got {node.usage}"
+            f"{path!r}: only DISPLAY/COMP-3/binary decode is supported in this "
+            f"slice, got {node.usage}"
         )
     values[path] = decode_display(
         raw,

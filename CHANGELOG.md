@@ -44,6 +44,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TRANSACTION-COUNT`/`UNIT-PRICE` fields decoded against hand-computed
   values, and a full end-to-end `decode_record()` mixing `COMP-3` and
   `DISPLAY` fields in one record.
+- Phase 8, fourth slice: `COMP`/`COMP-4`/`COMP-5`/`BINARY` decode —
+  `decode_binary()` reads a plain big-endian two's-complement (signed)
+  or unsigned integer; mechanically identical for all four usages,
+  since decision 0001's `COMP-5` exception (full native binary range
+  vs. `TRUNC(STD)`'s PIC-limited range) is a range/validation policy,
+  not a byte-decode difference. New `datatypes.sizing.is_binary_usage()`
+  alongside `is_packed_usage()`. 5 new tests, including
+  `mixed_usage.cpy`'s real `RECORD-ID`/`LARGE-ID`/`TRANSACTION-COUNT`/
+  `UNIT-PRICE`/`HUGE-VALUE` fields all decoding correctly end to end
+  (only `COMP-1`'s `SENSOR-READING` still raises, confirming the
+  earlier fields don't fail prematurely).
 
 ## [0.1.1] - Released 2026-10-25
 

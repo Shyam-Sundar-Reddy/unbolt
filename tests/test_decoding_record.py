@@ -83,12 +83,42 @@ def test_occurs_field_decode_is_not_supported_yet() -> None:
         decode_record(root, data)
 
 
-def test_binary_comp_field_decode_is_not_supported_yet() -> None:
-    # mixed_usage's RECORD-ID is PIC 9(5) COMP (binary) - still
-    # unsupported even though COMP-3 (its next sibling) now is.
+def test_binary_comp_fields_decode_as_big_endian_integers() -> None:
+    source = """
+    01  REC.
+        05  A PIC 9(5) COMP.
+        05  B PIC S9(18) COMP.
+    """
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+    assert root.byte_size == 4 + 8  # A: digits<=9 -> fullword; B: digits<=18 -> doubleword
+
+    data = bytes([0x00, 0x00, 0x30, 0x39]) + bytes([0xFF] * 8)  # A=12345, B=-1
+
+    values = decode_record(root, data)
+
+    assert values == {"REC.A": Decimal("12345"), "REC.B": Decimal("-1")}
+
+
+def test_mixed_usage_fixture_decodes_through_binary_and_packed_fields() -> None:
+    # mixed_usage's RECORD-ID/LARGE-ID (COMP), TRANSACTION-COUNT/
+    # UNIT-PRICE (COMP-3), and HUGE-VALUE (DISPLAY) must all decode
+    # without raising - only SENSOR-READING (COMP-1) should still be
+    # unsupported, proving the earlier fields don't raise prematurely.
     root = _root("mixed_usage")
-    with pytest.raises(UnsupportedDecodeError, match="DISPLAY/COMP-3"):
-        decode_record(root, bytes(root.byte_size))
+    assert root.byte_size == 55
+
+    data = (
+        bytes([0x00, 0x00, 0x30, 0x39])  # RECORD-ID = 12345
+        + bytes([0x12, 0x34, 0x56, 0x78, 0x9D])  # TRANSACTION-COUNT = -123456789
+        + bytes([0x12, 0x34, 0x56, 0x78, 0x90, 0x1C])  # UNIT-PRICE = 123456789.01
+        + bytes([0xFF] * 8)  # LARGE-ID = -1
+        + bytes([0xF0] * 20)  # HUGE-VALUE = 0
+        + bytes(55 - 4 - 5 - 6 - 8 - 20)  # SENSOR-READING/PRECISE-READING filler
+    )
+
+    with pytest.raises(UnsupportedDecodeError, match="SENSOR-READING.*COMP-1"):
+        decode_record(root, data)
 
 
 def test_comp3_fields_in_a_real_fixture_decode_to_hand_computed_values() -> None:

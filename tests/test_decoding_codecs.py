@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from unbolt.decoding.codecs import decode_display, decode_packed
+from unbolt.decoding.codecs import decode_binary, decode_display, decode_packed
 from unbolt.exceptions import InvalidSignNibbleError, UnsupportedDecodeError
 
 
@@ -109,3 +109,20 @@ def test_packed_non_digit_nibble_raises() -> None:
 def test_packed_invalid_sign_nibble_raises() -> None:
     with pytest.raises(InvalidSignNibbleError, match="sign nibble"):
         decode_packed(bytes([0x12, 0x3A]), digits=3, scale=0)
+
+
+def test_binary_unsigned_halfword() -> None:
+    assert decode_binary(bytes([0x00, 0x7B]), signed=False, scale=0) == Decimal("123")
+
+
+def test_binary_signed_negative_fullword() -> None:
+    # -1 as a 4-byte two's-complement fullword.
+    assert decode_binary(bytes([0xFF, 0xFF, 0xFF, 0xFF]), signed=True, scale=0) == Decimal("-1")
+
+
+def test_binary_signed_positive_doubleword() -> None:
+    assert decode_binary(bytes([0x00] * 7 + [0x7B]), signed=True, scale=0) == Decimal("123")
+
+
+def test_binary_scale_divides_the_unscaled_value() -> None:
+    assert decode_binary(bytes([0x00, 0x7B]), signed=False, scale=2) == Decimal("1.23")
