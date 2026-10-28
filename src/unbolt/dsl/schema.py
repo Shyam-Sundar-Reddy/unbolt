@@ -10,7 +10,7 @@ from typing import Any
 
 from unbolt.exceptions import SchemaVersionError
 
-DSL_VERSION = "1"
+DSL_VERSION = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,7 @@ class FieldNode:
     usage: str
     signed: bool
     sign_separate: bool
+    sign_leading: bool
     digits: int
     scale: int
     byte_size: int
@@ -67,6 +68,7 @@ def _field_from_dict(data: dict[str, Any]) -> FieldNode:
         usage=data["usage"],
         signed=data["signed"],
         sign_separate=data["sign_separate"],
+        sign_leading=data["sign_leading"],
         digits=data["digits"],
         scale=data["scale"],
         byte_size=data["byte_size"],

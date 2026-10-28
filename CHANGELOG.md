@@ -55,6 +55,18 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `UNIT-PRICE`/`HUGE-VALUE` fields all decoding correctly end to end
   (only `COMP-1`'s `SENSOR-READING` still raises, confirming the
   earlier fields don't fail prematurely).
+- Phase 8, fifth slice: `SIGN IS SEPARATE`/`SIGN IS LEADING` decode —
+  new `FieldNode.sign_leading` (DSL v2) so the DSL actually tracks what
+  `parser.py` already parsed but previously discarded. `decode_display()`
+  now handles all four sign placements: trailing overpunch (COBOL's
+  default), leading overpunch, trailing separate, and leading separate
+  — a separate sign is a plain `+`/`-` byte decoded normally through
+  the codepage, never confused with overpunch's byte-value convention.
+  7 new tests (net, after retiring the now-obsolete "SIGN IS SEPARATE
+  isn't supported yet" test), including two real `decode_record()` runs
+  confirming
+  `sign_leading` flows correctly from the parser through the DSL to
+  decode, not just `decode_display()` in isolation.
 
 ## [0.1.1] - Released 2026-10-25
 

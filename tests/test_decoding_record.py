@@ -197,3 +197,38 @@ def test_redefines_siblings_each_decode_their_own_view_of_the_shared_bytes() -> 
     assert values["REC.A"] == Decimal("12345")
     assert values["REC.B"] == Decimal("123")  # B's own 3 bytes, same offset as A
     assert values["REC.C"] == Decimal("98")
+
+
+def test_sign_is_leading_separate_decodes_end_to_end() -> None:
+    # Confirms sign_leading actually flows parser -> DSL -> decode_record,
+    # not just decode_display() in isolation.
+    source = """
+    01  REC.
+        05  A PIC S9(3) SIGN IS LEADING SEPARATE.
+        05  B PIC 9(2).
+    """
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+    assert root.byte_size == 4 + 2  # A: 3 digits + 1 separate sign byte; B: 2
+
+    data = bytes([0x60, 0xF1, 0xF2, 0xF3]) + bytes([0xF0, 0xF5])  # A=-123, B=05
+
+    values = decode_record(root, data)
+
+    assert values == {"REC.A": Decimal("-123"), "REC.B": Decimal("5")}
+
+
+def test_sign_is_leading_overpunch_decodes_end_to_end() -> None:
+    source = """
+    01  REC.
+        05  A PIC S9(3) SIGN IS LEADING.
+    """
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+    assert root.byte_size == 3  # no SEPARATE - overpunch, no extra byte
+
+    data = bytes([0xD1, 0xF2, 0xF3])  # leading overpunch negative -> -123
+
+    values = decode_record(root, data)
+
+    assert values == {"REC.A": Decimal("-123")}

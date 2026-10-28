@@ -12,5 +12,6 @@ class AstNode:
     occurs: int | None
     redefines: str | None
     sign_separate: bool
+    sign_leading: bool
     source_line: int
     children: list["AstNode"] = field(default_factory=list)

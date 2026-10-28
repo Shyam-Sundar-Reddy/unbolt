@@ -14,6 +14,7 @@
           "pic": "9(4)",
           "redefines": null,
           "scale": 0,
+          "sign_leading": false,
           "sign_separate": false,
           "signed": false,
           "source_line": 3,
@@ -31,6 +32,7 @@
           "pic": "9(2)",
           "redefines": null,
           "scale": 0,
+          "sign_leading": false,
           "sign_separate": false,
           "signed": false,
           "source_line": 4,
@@ -51,6 +53,7 @@
               "pic": "X(10)",
               "redefines": null,
               "scale": 0,
+              "sign_leading": false,
               "sign_separate": false,
               "signed": false,
               "source_line": 6,
@@ -68,6 +71,7 @@
               "pic": "9(4)",
               "redefines": null,
               "scale": 0,
+              "sign_leading": false,
               "sign_separate": false,
               "signed": false,
               "source_line": 7,
@@ -83,6 +87,7 @@
           "pic": null,
           "redefines": null,
           "scale": 0,
+          "sign_leading": false,
           "sign_separate": false,
           "signed": false,
           "source_line": 5,
@@ -98,6 +103,7 @@
       "pic": null,
       "redefines": null,
       "scale": 0,
+      "sign_leading": false,
       "sign_separate": false,
       "signed": false,
       "source_line": 2,
@@ -106,5 +112,5 @@
     }
   ],
   "source_file": "occurs_table.cpy",
-  "version": "1"
+  "version": "2"
 }

@@ -148,6 +148,7 @@ def _parse_entry(entry: list[Token], diagnostics: list[Diagnostic]) -> AstNode |
         occurs=None,
         redefines=None,
         sign_separate=False,
+        sign_leading=False,
         source_line=first.line,
     )
     _parse_clauses(entry[2:], node, diagnostics)
@@ -221,6 +222,7 @@ def _parse_clauses(tokens: list[Token], node: AstNode, diagnostics: list[Diagnos
             if i < n and tokens[i].text.upper() == "IS":
                 i += 1
             if i < n and tokens[i].text.upper() in ("LEADING", "TRAILING"):
+                node.sign_leading = tokens[i].text.upper() == "LEADING"
                 i += 1
             if i < n and tokens[i].text.upper() == "SEPARATE":
                 node.sign_separate = True

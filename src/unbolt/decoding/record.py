@@ -80,6 +80,7 @@ def _decode_node(
         raw,
         signed=node.signed,
         sign_separate=node.sign_separate,
+        sign_leading=node.sign_leading,
         scale=node.scale,
         codepage=codepage,
     )

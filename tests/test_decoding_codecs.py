@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from unbolt.decoding.codecs import decode_binary, decode_display, decode_packed
-from unbolt.exceptions import InvalidSignNibbleError, UnsupportedDecodeError
+from unbolt.exceptions import InvalidSignNibbleError
 
 
 def test_unsigned_display_decodes_plain_digits() -> None:
@@ -44,9 +44,48 @@ def test_single_byte_signed_field_decodes_from_the_sign_nibble_alone() -> None:
     assert value == Decimal("-7")
 
 
-def test_sign_separate_is_not_supported_yet() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="SIGN IS SEPARATE"):
-        decode_display(bytes([0xF1, 0x2B]), signed=True, sign_separate=True, scale=0)
+def test_sign_separate_trailing_decodes_a_plain_sign_byte() -> None:
+    # "123" + trailing separate '+' (cp037 '+' = 0x4E)
+    value = decode_display(
+        bytes([0xF1, 0xF2, 0xF3, 0x4E]), signed=True, sign_separate=True, scale=0
+    )
+    assert value == Decimal("123")
+
+
+def test_sign_separate_leading_decodes_a_plain_sign_byte() -> None:
+    # leading separate '-' (cp037 '-' = 0x60) + "123"
+    value = decode_display(
+        bytes([0x60, 0xF1, 0xF2, 0xF3]), signed=True, sign_separate=True, sign_leading=True, scale=0
+    )
+    assert value == Decimal("-123")
+
+
+def test_sign_separate_with_scale() -> None:
+    value = decode_display(
+        bytes([0xF1, 0xF2, 0xF3, 0x4E]), signed=True, sign_separate=True, scale=2
+    )
+    assert value == Decimal("1.23")
+
+
+def test_sign_separate_invalid_sign_character_raises() -> None:
+    # last byte decodes to '5', not '+'/'-'.
+    with pytest.raises(InvalidSignNibbleError, match="separate sign byte"):
+        decode_display(bytes([0xF1, 0xF2, 0xF3, 0xF5]), signed=True, sign_separate=True, scale=0)
+
+
+def test_overpunch_leading_positive() -> None:
+    # leading overpunch digit 1 (positive zone 0xC) + "23"
+    value = decode_display(
+        bytes([0xC1, 0xF2, 0xF3]), signed=True, sign_separate=False, sign_leading=True, scale=0
+    )
+    assert value == Decimal("123")
+
+
+def test_overpunch_leading_negative() -> None:
+    value = decode_display(
+        bytes([0xD1, 0xF2, 0xF3]), signed=True, sign_separate=False, sign_leading=True, scale=0
+    )
+    assert value == Decimal("-123")
 
 
 def test_invalid_sign_nibble_raises_a_clear_error() -> None:

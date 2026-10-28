@@ -1,13 +1,18 @@
-# DSL v1 spec
+# DSL v2 spec
 
 Defined in `src/unbolt/dsl/schema.py`. Two frozen, slotted dataclasses —
 immutable: once built, a DSL tree never changes. Mapping decisions and
 overrides (Phase 2) live in separate objects, never mutate these.
 
-**v0 → v1 (Phase 8, ADR 0008)**: added `FieldNode.offset`. `Dsl.from_json()`
-hard-fails (`SchemaVersionError`) on a v0 JSON file — there's no
-migration path, since `offset` has no meaningful default to backfill
-with; re-parse the original copybook with the current version instead.
+**v0 → v1 (Phase 8, ADR 0008)**: added `FieldNode.offset`.
+**v1 → v2 (Phase 8)**: added `FieldNode.sign_leading`, so a real decoder
+can tell a `SIGN IS LEADING` field's sign (separate or overpunched) from
+COBOL's trailing default — `parser.py` previously parsed `LEADING`/
+`TRAILING` only to immediately discard it. `Dsl.from_json()` hard-fails
+(`SchemaVersionError`) on a stale-version JSON file for both bumps —
+there's no migration path, since neither field has a meaningful default
+to backfill with; re-parse the original copybook with the current
+version instead.
 
 ## `FieldNode`
 
@@ -22,6 +27,7 @@ One COBOL data item — either a **group** (has `children`, no `pic`) or an
 | `usage` | `str` | `"DISPLAY"`, `"COMP"`, `"COMP-1"`, `"COMP-2"`, `"COMP-3"`, `"COMP-4"`, `"COMP-5"` |
 | `signed` | `bool` | Whether the PIC has `S` |
 | `sign_separate` | `bool` | `SIGN IS SEPARATE` present (adds one byte vs. overpunched) |
+| `sign_leading` | `bool` | `SIGN IS LEADING` present — the sign (separate or overpunched) is the field's first byte, not its last. `False` (trailing) is COBOL's default without a `SIGN` clause |
 | `digits` | `int` | Total digit count, integer + fractional (`S9(7)V99` → 9) |
 | `scale` | `int` | Fractional digit count — the `V` position (`S9(7)V99` → 2) |
 | `byte_size` | `int` | Computed storage size; see docs/acceptance-criteria.md for the formulas per USAGE |

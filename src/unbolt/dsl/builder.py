@@ -21,7 +21,7 @@ from unbolt.parser.ast import AstNode
 from unbolt.parser.parser import ParseResult
 
 
-def build_dsl(parse_result: ParseResult, *, source_file: str, version: str = "1") -> Dsl:
+def build_dsl(parse_result: ParseResult, *, source_file: str, version: str = "2") -> Dsl:
     roots = tuple(_assign_offsets(_build_field(node), 0) for node in parse_result.roots)
     return Dsl(version=version, source_file=source_file, roots=roots)
 
@@ -63,6 +63,7 @@ def _build_field(node: AstNode) -> FieldNode:
         usage=node.usage,
         signed=signed,
         sign_separate=node.sign_separate,
+        sign_leading=node.sign_leading,
         digits=digits,
         scale=scale,
         byte_size=byte_size,
