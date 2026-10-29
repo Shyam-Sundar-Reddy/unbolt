@@ -25,10 +25,18 @@ trusting, don't just re-read the code.
   `REDEFINES`'s shared offsets. It does **not yet** decode: `COMP-1`/
   `COMP-2` (float — no safe default, goal.md §5.4), alphanumeric/edited/
   national fields, or `OCCURS` tables — each raises
-  `UnsupportedDecodeError` rather than guessing. A record whose byte
-  length doesn't match its
-  layout is rejected outright (`RecordLengthMismatchError`), never
-  best-effort decoded (decision 0010).
+  `UnsupportedDecodeError` rather than guessing. A fixed-length record
+  whose byte length doesn't match its layout is rejected outright
+  (`RecordLengthMismatchError`), never best-effort decoded (decision
+  0010). `decode_rdw_record()` parses and validates a 4-byte RDW
+  (Record Descriptor Word) variable-length-record header — big-endian
+  total length including the header itself, reserved bytes must be
+  zero (spanned records aren't supported) — then hands the extracted
+  payload to `decode_record()` unchanged: the payload still has to
+  match `root.byte_size` exactly, decision 0010's rule isn't relaxed
+  for variable-length records. There's no support yet for reading a
+  *stream* of multiple RDW records back to back (one call decodes one
+  record) or for the spanned-record segment-descriptor convention.
 - **`TRUNC(STD)` only.** `TRUNC(BIN)`/`TRUNC(OPT)` aren't modeled.
   `COMP-5` is the one documented exception (always full binary range,
   per decision 0001) — everything else assumes the safe, PIC-limited

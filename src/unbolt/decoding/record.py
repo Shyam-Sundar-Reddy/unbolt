@@ -16,7 +16,9 @@ from unbolt.datatypes.sizing import (
 )
 from unbolt.decoding.codecs import DEFAULT_CODEPAGE, decode_binary, decode_display, decode_packed
 from unbolt.dsl.schema import FieldNode
-from unbolt.exceptions import RecordLengthMismatchError, UnsupportedDecodeError
+from unbolt.exceptions import RdwHeaderError, RecordLengthMismatchError, UnsupportedDecodeError
+
+_RDW_HEADER_SIZE = 4
 
 
 def decode_record(
@@ -47,6 +49,54 @@ def decode_record(
     values: dict[str, object] = {}
     _decode_node(root, root.name, data, codepage, values)
     return values
+
+
+def decode_rdw_record(
+    root: FieldNode, data: bytes, *, codepage: str = DEFAULT_CODEPAGE
+) -> dict[str, object]:
+    """Decode one RDW (Record Descriptor Word)-prefixed variable-length
+    record: a 4-byte header - 2 bytes big-endian total length (including
+    the header itself), then 2 reserved bytes - followed by the record's
+    own bytes. The extracted payload is handed to decode_record()
+    unchanged, so every rule it enforces (exact-length match against
+    root.byte_size, which fields are decodable) still applies - this
+    function only parses and validates the framing, it doesn't add a
+    new best-effort policy on top (decision 0010).
+
+    Args: root (FieldNode): a Dsl root to decode the extracted payload against.
+        data (bytes): starts with the RDW header; may contain
+            additional bytes after this one record (e.g. more records
+            in a stream) - only the declared length is read.
+        codepage (str): EBCDIC code page; cp037 by default (decision 0010).
+    Returns: dict[str, object]: same shape as decode_record().
+    Raises:
+        RdwHeaderError: fewer than 4 bytes are available, the declared
+            length is under 4 or past the end of `data`, or the
+            reserved bytes are non-zero (a spanned-record segment
+            descriptor - spanned records aren't supported).
+        RecordLengthMismatchError, UnsupportedDecodeError: propagated
+            from decode_record() on the extracted payload, unchanged.
+    """
+    if len(data) < _RDW_HEADER_SIZE:
+        raise RdwHeaderError(f"RDW header needs {_RDW_HEADER_SIZE} bytes, got {len(data)}")
+    total_length = int.from_bytes(data[0:2], byteorder="big")
+    reserved = data[2:_RDW_HEADER_SIZE]
+    if reserved != b"\x00\x00":
+        raise RdwHeaderError(
+            f"RDW reserved bytes are {reserved!r}, not zero - spanned records aren't supported"
+        )
+    if total_length < _RDW_HEADER_SIZE:
+        raise RdwHeaderError(
+            f"RDW declares a total length of {total_length}, below its own "
+            f"{_RDW_HEADER_SIZE}-byte header"
+        )
+    if total_length > len(data):
+        raise RdwHeaderError(
+            f"RDW declares {total_length} bytes, but only {len(data)} are available"
+        )
+
+    payload = data[_RDW_HEADER_SIZE:total_length]
+    return decode_record(root, payload, codepage=codepage)
 
 
 def _decode_node(

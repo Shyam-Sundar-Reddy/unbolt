@@ -67,6 +67,22 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   confirming
   `sign_leading` flows correctly from the parser through the DSL to
   decode, not just `decode_display()` in isolation.
+- Phase 8, sixth and final slice: `decode_rdw_record()` — parses and
+  validates a 4-byte RDW (Record Descriptor Word) variable-length-
+  record header (big-endian total length including the header itself,
+  reserved bytes must be zero — non-zero marks a spanned record,
+  which isn't supported), then hands the extracted payload to the
+  existing `decode_record()` unchanged. Verified against IBM's own
+  documented RDW format before implementing, not assumed. RDW framing
+  is additive — it doesn't relax decision 0010's exact-length-match
+  rule for the payload, it only tells you where one record ends inside
+  a larger buffer (e.g. ignoring a following record's bytes). New
+  `RdwHeaderError` for a malformed header. 7 new tests, including a
+  real fixture's bytes wrapped in a correct RDW decoding identically
+  to the unwrapped call, and trailing bytes after the declared length
+  being correctly ignored. This closes out Phase 8 (goal.md §7,
+  phase.md Phase 8): real byte-level decoding for DISPLAY, COMP-3,
+  binary, all four sign placements, and RDW framing.
 
 ## [0.1.1] - Released 2026-10-25
 

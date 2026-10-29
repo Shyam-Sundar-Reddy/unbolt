@@ -42,6 +42,13 @@ class InvalidSignNibbleError(UnboltError):
 
 
 class UnsupportedDecodeError(UnboltError):
-    """The field or clause combination isn't decodable yet (e.g. SIGN IS
-    SEPARATE - leading/trailing position isn't tracked in the DSL;
-    COMP-3/binary/OCCURS/REDEFINES decode - later Phase 8 slices)."""
+    """The field or clause combination isn't decodable yet (COMP-1/
+    COMP-2 - no safe default, goal.md §5.4; alphanumeric/edited/
+    national fields; OCCURS tables - later Phase 8 slices)."""
+
+
+class RdwHeaderError(UnboltError):
+    """An RDW (Record Descriptor Word) header is malformed: shorter
+    than 4 bytes, declares a length under 4 or past the end of the
+    buffer, or its reserved bytes are non-zero (a spanned-record
+    segment descriptor - spanned records aren't supported)."""
