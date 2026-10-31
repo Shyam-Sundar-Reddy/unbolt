@@ -83,6 +83,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   being correctly ignored. This closes out Phase 8 (goal.md §7,
   phase.md Phase 8): real byte-level decoding for DISPLAY, COMP-3,
   binary, all four sign placements, and RDW framing.
+- Phase 9 (local docs/phase.md), first slice: `unbolt.variants.
+  classify_compatibility()` — FULL/FORWARD/BACKWARD/BREAKING for two
+  versions of the same record, per decision 0011 (worked out, not
+  guessed: COBOL records are positional, so Avro's own backward/
+  forward rules needed reframing — a purely-trailing field addition is
+  FORWARD-only, a purely-trailing removal is BACKWARD-only, since
+  COBOL's fixed-offset model has no default-value mechanism to make a
+  trailing addition safe for an old-data reader). Any reordering,
+  middle insertion/removal, or in-place change to a shared field's
+  offset/size/type/scale is BREAKING. New `dsl.walk.walk_from()` (a
+  single-root walk, factored out of `walk_fields()` for reuse here).
+  12 new tests, including a regression for a real bug caught before
+  trusting the implementation: a group's own `byte_size` naturally
+  grows when a trailing child is added, which the first version wrongly
+  flagged as a breaking change on the group itself; group/leaf
+  signature comparison now excludes derived fields. No CLI command or
+  YAML variant config yet — see `docs/limitations.md`.
 
 ## [0.1.1] - Released 2026-10-25
 

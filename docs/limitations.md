@@ -94,6 +94,27 @@ dropped — never silently misconverted:
   collide. Explicitly out of scope per decision 0003, not yet raised
   as its own question.
 
+## Compatibility classification (`unbolt.variants`, Phase 9)
+
+- **Structural, not a decode guarantee.** `classify_compatibility()`
+  (decision 0011) judges two DSL shapes, not whether `decode_record()`
+  will actually tolerate the length difference today — it still
+  requires an exact length match (decision 0010), with no best-effort
+  decode for a `FORWARD`/`BACKWARD` trailing change.
+- **No rename detection.** A field renamed but otherwise identical is
+  classified as one `removed` + one `added`, not recognized as the
+  same field continuing under a new name. No alias mechanism exists to
+  say otherwise.
+- **`REDEFINES` overlays aren't compared.** Changing which field a
+  `REDEFINES` targets, or adding/removing an overlay, isn't reflected
+  in the classifier's signature fields unless it also happens to shift
+  an offset or byte size — a `redefines` value changing in place,
+  silently, is a known gap for this first slice.
+- No CLI command or YAML variant/discriminator config yet — only the
+  pure `classify_compatibility(old_root, new_root)` function exists so
+  far; `unbolt check` and multi-root/multi-variant copybooks are a
+  later Phase 9 slice.
+
 ## Performance
 
 - No CI regression budget yet (`docs/performance.md` explains why: the
