@@ -15,7 +15,7 @@ def _run(coro):  # type: ignore[no-untyped-def]
     return asyncio.run(coro)
 
 
-def test_server_lists_all_seven_tools_matching_goal_md() -> None:
+def test_server_lists_all_eight_tools_matching_goal_md() -> None:
     async def go():  # type: ignore[no-untyped-def]
         async with Client(mcp) as client:
             return [t.name for t in await client.list_tools()]
@@ -29,6 +29,7 @@ def test_server_lists_all_seven_tools_matching_goal_md() -> None:
         "generate_target_code",
         "validate_conversion",
         "generate_conversion_report",
+        "check_compatibility",
     }
 
 
@@ -121,6 +122,40 @@ def test_update_mapping_override_rejects_an_invalid_status_candidate_without_for
             )
 
     with pytest.raises(Exception, match="not a valid candidate"):
+        _run(go())
+
+
+def test_check_compatibility_tool(tmp_path: Path) -> None:
+    old = tmp_path / "old.cpy"
+    new = tmp_path / "new.cpy"
+    old.write_text("01 REC.\n  05 A PIC 9(3).\n")
+    new.write_text("01 REC.\n  05 A PIC 9(3).\n  05 B PIC 9(2).\n")
+
+    async def go():  # type: ignore[no-untyped-def]
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "check_compatibility", {"old_file": str(old), "new_file": str(new)}
+            )
+
+    result = _run(go())
+    assert result.data["compatibility"] == "FORWARD"
+    assert result.data["changes"][0]["field_path"] == "REC.B"
+
+
+def test_check_compatibility_tool_raises_when_mode_not_satisfied(tmp_path: Path) -> None:
+    old = tmp_path / "old.cpy"
+    new = tmp_path / "new.cpy"
+    old.write_text("01 REC.\n  05 A PIC 9(3).\n")
+    new.write_text("01 REC.\n  05 A PIC 9(3).\n  05 B PIC 9(2).\n")
+
+    async def go():  # type: ignore[no-untyped-def]
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "check_compatibility",
+                {"old_file": str(old), "new_file": str(new), "mode": "backward"},
+            )
+
+    with pytest.raises(Exception, match="does not satisfy mode"):
         _run(go())
 
 

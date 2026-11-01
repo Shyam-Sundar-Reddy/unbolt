@@ -52,3 +52,13 @@ class RdwHeaderError(UnboltError):
     than 4 bytes, declares a length under 4 or past the end of the
     buffer, or its reserved bytes are non-zero (a spanned-record
     segment descriptor - spanned records aren't supported)."""
+
+
+class UnknownCompatibilityModeError(UnboltError):
+    """satisfies_mode() was asked about a mode other than 'backward',
+    'forward', or 'full'."""
+
+
+class IncompatibleChangeError(UnboltError):
+    """classify_compatibility()'s verdict for two record versions does
+    not satisfy the compatibility mode the caller required."""

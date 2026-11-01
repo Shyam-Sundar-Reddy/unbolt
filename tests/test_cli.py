@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from unbolt.cli import build_parser, main
-from unbolt.exceptions import InvalidInputError, UnapprovedMappingError
+from unbolt.exceptions import IncompatibleChangeError, InvalidInputError, UnapprovedMappingError
 from unbolt.overrides import load_overrides
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
@@ -172,3 +172,45 @@ def test_report_error_path_unapproved_field(tmp_path: Path) -> None:
                 "--overrides-file", str(tmp_path / "overrides.json"),
             ]
         )
+
+
+def test_check_identical_files_is_full(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["check", FLAT, FLAT]) == 0
+    assert capsys.readouterr().out.startswith("FULL")
+
+
+def test_check_trailing_addition_satisfies_forward_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = tmp_path / "old.cpy"
+    new = tmp_path / "new.cpy"
+    old.write_text("01 REC.\n  05 A PIC 9(3).\n")
+    new.write_text("01 REC.\n  05 A PIC 9(3).\n  05 B PIC 9(2).\n")
+
+    assert main(["check", str(old), str(new), "--mode", "forward"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("FORWARD")
+    assert "added" in out
+    assert "REC.B" in out
+
+
+def test_check_trailing_addition_does_not_satisfy_backward_mode(tmp_path: Path) -> None:
+    old = tmp_path / "old.cpy"
+    new = tmp_path / "new.cpy"
+    old.write_text("01 REC.\n  05 A PIC 9(3).\n")
+    new.write_text("01 REC.\n  05 A PIC 9(3).\n  05 B PIC 9(2).\n")
+
+    with pytest.raises(IncompatibleChangeError, match="FORWARD"):
+        main(["check", str(old), str(new), "--mode", "backward"])
+
+
+def test_check_without_mode_never_raises_even_when_breaking(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = tmp_path / "old.cpy"
+    new = tmp_path / "new.cpy"
+    old.write_text("01 REC.\n  05 A PIC 9(3).\n  05 B PIC 9(2).\n")
+    new.write_text("01 REC.\n  05 B PIC 9(2).\n  05 A PIC 9(3).\n")
+
+    assert main(["check", str(old), str(new)]) == 0
+    assert capsys.readouterr().out.startswith("BREAKING")

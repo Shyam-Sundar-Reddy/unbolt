@@ -2,7 +2,7 @@
 
 `unbolt` (stdlib `argparse` — see decision discussion in `docs/phase.md`
 Phase 5: no new runtime dependency justified for a handful of
-subcommands with simple flags). Seven commands, each a thin wrapper
+subcommands with simple flags). Eight commands, each a thin wrapper
 over exactly one core function (`src/unbolt/cli.py`).
 
 ## `unbolt parse <file>`
@@ -85,6 +85,39 @@ $ unbolt report fixtures/flat_display.cpy --target go
 |---|---|---|---|---|
 | `CUSTOMER-RECORD.ACCOUNT-BALANCE` | 5 | `int64 (scaled)` | `go-decimal-int64-scaled` | ... |
 ```
+
+## `unbolt check <old_file> <new_file> [--mode backward|forward|full]`
+
+Classifies how `<new_file>`'s record layout differs from `<old_file>`'s:
+`FULL`, `FORWARD`, `BACKWARD`, or `BREAKING` (decision 0011, in the
+local `docs/decisions/`). COBOL records are positional (identified by
+byte offset, not by name/tag), so the rules are asymmetric: a field
+added purely at the end is `FORWARD`-compatible only (an old reader
+simply never looks at the new trailing bytes); a field removed purely
+from the end is `BACKWARD`-compatible only. Reordering, a middle
+insert/removal, or any change to a shared field's offset/size/type/
+scale is always `BREAKING`.
+
+Without `--mode`, it only reports — exit code `0` regardless of the
+verdict. With `--mode`, a verdict that doesn't satisfy it raises
+(non-zero exit), so this can gate a CI step.
+
+```
+$ unbolt check v1.cpy v2.cpy --mode forward
+FORWARD
+  added    CUSTOMER-RECORD.CUSTOMER-EMAIL: added at offset 9, 40 bytes
+
+$ unbolt check v1.cpy v2.cpy --mode backward
+FORWARD
+  added    CUSTOMER-RECORD.CUSTOMER-EMAIL: added at offset 9, 40 bytes
+unbolt.exceptions.IncompatibleChangeError: FORWARD does not satisfy --mode backward
+$ echo $?
+1
+```
+
+This is a structural judgment on the two DSL shapes — it doesn't mean
+`decode_record()` itself tolerates the length difference yet;
+`decode_record()` still requires an exact length match (decision 0010).
 
 ## `unbolt mcp`
 

@@ -100,6 +100,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   flagged as a breaking change on the group itself; group/leaf
   signature comparison now excludes derived fields. No CLI command or
   YAML variant config yet — see `docs/limitations.md`.
+- Phase 9, second slice: `unbolt check old.cpy new.cpy [--mode
+  backward|forward|full]` (CLI) and `check_compatibility(old_file,
+  new_file, mode=None)` (MCP tool) — both thin wrappers over
+  `classify_compatibility()`; a new `satisfies_mode()` in
+  `unbolt.variants` is the single shared place both the CLI and MCP
+  tool ask "does this verdict meet what was requested," so they can't
+  drift apart. Without `--mode`/`mode`, `check` only reports (exit code
+  0 regardless of verdict); with it, a verdict that doesn't satisfy the
+  mode raises `IncompatibleChangeError` (non-zero CLI exit), so this can
+  gate a CI step. `docs/cli.md`/`docs/mcp.md` updated with real captured
+  output; `goal.md` §10 updated (8 MCP tools, 8 CLI commands). 6 new
+  tests. Still only compares a copybook's first root
+  (`dsl.roots[0]`) — no multi-root or YAML variant/discriminator
+  support yet, see `docs/limitations.md`.
 
 ## [0.1.1] - Released 2026-10-25
 

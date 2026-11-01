@@ -110,10 +110,14 @@ dropped — never silently misconverted:
   in the classifier's signature fields unless it also happens to shift
   an offset or byte size — a `redefines` value changing in place,
   silently, is a known gap for this first slice.
-- No CLI command or YAML variant/discriminator config yet — only the
-  pure `classify_compatibility(old_root, new_root)` function exists so
-  far; `unbolt check` and multi-root/multi-variant copybooks are a
-  later Phase 9 slice.
+- **`unbolt check`/`check_compatibility` only compare a copybook's
+  first root** (`dsl.roots[0]`) — a copybook with multiple `01`/`77`
+  top-level items only has its first one checked; multi-root support
+  isn't implemented.
+- No YAML variant/discriminator config yet (choosing between several
+  named layouts of "the same" copybook by a discriminator field's
+  value) — that's a separate, later Phase 9 slice. Today, `check`
+  always compares exactly two whole copybook files directly.
 
 ## Performance
 

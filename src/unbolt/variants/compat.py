@@ -6,7 +6,14 @@ decode_record() and recommend_mappings() already consume.
 
 from unbolt.dsl.schema import FieldNode
 from unbolt.dsl.walk import walk_from
+from unbolt.exceptions import UnknownCompatibilityModeError
 from unbolt.variants.model import Compatibility, CompatibilityResult, FieldChange
+
+_MODE_SATISFIED_BY: dict[str, frozenset[Compatibility]] = {
+    "backward": frozenset({"FULL", "BACKWARD"}),
+    "forward": frozenset({"FULL", "FORWARD"}),
+    "full": frozenset({"FULL"}),
+}
 
 _SIGNATURE_FIELDS = (
     "offset",
@@ -76,6 +83,32 @@ def classify_compatibility(old: FieldNode, new: FieldNode) -> CompatibilityResul
         old_by_path=old_by_path,
     )
     return CompatibilityResult(compatibility=compatibility, changes=tuple(changes))
+
+
+def satisfies_mode(compatibility: Compatibility, mode: str) -> bool:
+    """Does a classify_compatibility() verdict satisfy a requested mode?
+
+    Args: compatibility (Compatibility): a CompatibilityResult.compatibility value.
+        mode (str): "backward", "forward", or "full".
+    Returns: bool: True if `compatibility` meets what `mode` requires -
+        FULL satisfies every mode (nothing changed); BACKWARD only
+        satisfies "backward"; FORWARD only satisfies "forward"; BREAKING
+        satisfies nothing.
+    Raises:
+        UnknownCompatibilityModeError: `mode` isn't one of the three above.
+    Example:
+        >>> satisfies_mode("FULL", "backward")
+        True
+        >>> satisfies_mode("FORWARD", "backward")
+        False
+    """
+    try:
+        allowed = _MODE_SATISFIED_BY[mode]
+    except KeyError:
+        raise UnknownCompatibilityModeError(
+            f"unknown mode {mode!r}; expected one of {sorted(_MODE_SATISFIED_BY)}"
+        ) from None
+    return compatibility in allowed
 
 
 def _classify(

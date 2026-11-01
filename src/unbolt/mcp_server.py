@@ -12,6 +12,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from unbolt.dsl import Dsl, build_dsl
+from unbolt.exceptions import IncompatibleChangeError
 from unbolt.generators import generate_code
 from unbolt.mapping import recommend_mappings, valid_candidate_names
 from unbolt.overrides import apply_override, load_overrides, save_overrides
@@ -19,6 +20,7 @@ from unbolt.overrides.persistence import DEFAULT_OVERRIDES_PATH
 from unbolt.parser import parse_copybook
 from unbolt.reporting import build_report, render_json, render_markdown
 from unbolt.validation import validate_conversion as _validate_conversion
+from unbolt.variants import classify_compatibility, satisfies_mode
 
 mcp = FastMCP("unbolt")
 
@@ -109,6 +111,22 @@ def generate_conversion_report(
     validation = _validate_conversion(dsl, mapping, generated, overrides=overrides)
     report = build_report(dsl, mapping, validation, overrides=overrides)
     return render_json(report) if format == "json" else render_markdown(report)
+
+
+@mcp.tool
+def check_compatibility(
+    old_file: str, new_file: str, mode: str | None = None
+) -> dict[str, Any]:
+    """Classify how new_file's record layout differs from old_file's:
+    FULL/FORWARD/BACKWARD/BREAKING (decision 0011). If mode is given
+    ("backward"/"forward"/"full") and the verdict doesn't satisfy it,
+    raises IncompatibleChangeError instead of returning quietly."""
+    old = _file_to_dsl(old_file)
+    new = _file_to_dsl(new_file)
+    result = classify_compatibility(old.roots[0], new.roots[0])
+    if mode is not None and not satisfies_mode(result.compatibility, mode):
+        raise IncompatibleChangeError(f"{result.compatibility} does not satisfy mode {mode!r}")
+    return asdict(result)
 
 
 def main() -> None:

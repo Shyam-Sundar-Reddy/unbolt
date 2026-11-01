@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from unbolt.dsl import Dsl, build_dsl
+from unbolt.exceptions import IncompatibleChangeError
 from unbolt.generators import generate_code
 from unbolt.mapping import recommend_mappings, valid_candidate_names
 from unbolt.overrides import apply_override, load_overrides, save_overrides
@@ -16,6 +17,7 @@ from unbolt.overrides.persistence import DEFAULT_OVERRIDES_PATH
 from unbolt.parser import parse_copybook
 from unbolt.reporting import build_report, render_json, render_markdown
 from unbolt.validation import validate_conversion
+from unbolt.variants import classify_compatibility, satisfies_mode
 
 
 def _load_dsl(file: str) -> Dsl:
@@ -79,6 +81,19 @@ def cmd_validate(args: argparse.Namespace) -> None:
         print("no findings")
 
 
+def cmd_check(args: argparse.Namespace) -> None:
+    old = _load_dsl(args.old_file)
+    new = _load_dsl(args.new_file)
+    result = classify_compatibility(old.roots[0], new.roots[0])
+    print(result.compatibility)
+    for change in result.changes:
+        print(f"  {change.kind:8} {change.field_path}: {change.detail}")
+    if args.mode is not None and not satisfies_mode(result.compatibility, args.mode):
+        raise IncompatibleChangeError(
+            f"{result.compatibility} does not satisfy --mode {args.mode}"
+        )
+
+
 def cmd_mcp(args: argparse.Namespace) -> None:
     # Lazy import: mcp_server needs fastmcp (the [mcp] extra), which the
     # base `unbolt` install doesn't require - only paid for if you use it.
@@ -128,6 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = add("report", cmd_report, needs_target=True)
     report.add_argument("--format", choices=["md", "json"], default="md")
+
+    check = sub.add_parser("check")
+    check.add_argument("old_file")
+    check.add_argument("new_file")
+    check.add_argument("--mode", choices=["backward", "forward", "full"])
+    check.set_defaults(func=cmd_check)
 
     mcp_parser = sub.add_parser("mcp")
     mcp_parser.set_defaults(func=cmd_mcp)
