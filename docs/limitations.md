@@ -114,10 +114,19 @@ dropped — never silently misconverted:
   first root** (`dsl.roots[0]`) — a copybook with multiple `01`/`77`
   top-level items only has its first one checked; multi-root support
   isn't implemented.
-- No YAML variant/discriminator config yet (choosing between several
-  named layouts of "the same" copybook by a discriminator field's
-  value) — that's a separate, later Phase 9 slice. Today, `check`
-  always compares exactly two whole copybook files directly.
+- **Variant config (decision 0012, JSON not YAML) is load/validate
+  only — no runtime variant selection.** `load_variant_config()` and
+  `validate_variant_config()` exist, and can be cross-checked against
+  real parsed copybooks (discriminator field present, not ambiguous,
+  every rule's variant has a matching DSL). But nothing yet actually
+  decodes a discriminator value from real bytes and dispatches to the
+  matching variant's copybook — that's genuinely blocked on
+  alphanumeric field decode, since most real discriminator fields are
+  `PIC X`, and `unbolt.decoding` doesn't decode alphanumeric fields
+  yet (see above). `UnknownVariant`-with-raw-bytes-preserved fallback
+  behavior is specified in the config's `unknown_variant` policy field
+  but not implemented. `unbolt check` always compares exactly two
+  whole copybook files directly; it doesn't consult a variant config.
 
 ## Performance
 

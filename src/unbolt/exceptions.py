@@ -62,3 +62,10 @@ class UnknownCompatibilityModeError(UnboltError):
 class IncompatibleChangeError(UnboltError):
     """classify_compatibility()'s verdict for two record versions does
     not satisfy the compatibility mode the caller required."""
+
+
+class InvalidVariantConfigError(UnboltError):
+    """A variant config's JSON shape is malformed (decision 0012), or
+    it doesn't match the copybooks it's validated against (a
+    referenced variant is missing, or the discriminator field isn't
+    present in one of them)."""

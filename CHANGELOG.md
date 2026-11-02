@@ -114,6 +114,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tests. Still only compares a copybook's first root
   (`dsl.roots[0]`) — no multi-root or YAML variant/discriminator
   support yet, see `docs/limitations.md`.
+- Phase 9, third slice: variant config — `load_variant_config()`/
+  `validate_variant_config()` in `unbolt.variants.config`. Closes two
+  open decisions: goal.md §8 Q14 (discriminator ownership — in-record/
+  self-describing, since unbolt has no Kafka topic/subject integration
+  anywhere in scope) and the config format (JSON, not the originally-
+  planned YAML — zero new dependencies, same pattern
+  `.unbolt-overrides.json` already uses; decision 0012). Validates
+  shape (required keys, `unknown_variant` ∈ `{"reject","passthrough"}`,
+  unique variant names/values) and, separately, cross-checks a loaded
+  config against real parsed copybooks (discriminator field present
+  and unambiguous in every referenced variant). New
+  `InvalidVariantConfigError`. 16 new tests. This is load/validate
+  only — runtime variant selection (decode a real discriminator value,
+  dispatch, `UnknownVariant` fallback) is genuinely blocked on
+  alphanumeric field decode, which `unbolt.decoding` doesn't have yet;
+  see `docs/limitations.md`. Also revises ADR 0008: the
+  `Dsl.variant`/`Dsl.schema_version` fields it deferred to this phase
+  turned out not needed — variant identity lives in the config's own
+  `VariantRule`, not embedded in `Dsl`.
 
 ## [0.1.1] - Released 2026-10-25
 
