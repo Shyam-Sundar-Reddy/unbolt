@@ -1,9 +1,9 @@
 """Byte-level decode for DISPLAY (zoned decimal), COMP-3/PACKED-DECIMAL,
-and COMP/COMP-4/COMP-5/BINARY fields (decision 0010: cp037 default
-EBCDIC code page, explicit override allowed - charset only matters for
-DISPLAY's text/overpunch decode, binary is just bytes). COMP-1/COMP-2
-(float) and OCCURS/REDEFINES-aware decode are later Phase 8 slices
-(phase.md).
+COMP/COMP-4/COMP-5/BINARY, and plain alphanumeric (PIC X/A) fields
+(decision 0010: cp037 default EBCDIC code page, explicit override
+allowed - charset only matters for text/overpunch decode, binary is
+just bytes). COMP-1/COMP-2 (float), edited pictures, national/DBCS, and
+OCCURS/REDEFINES-aware decode are later Phase 8 slices (phase.md).
 
 Sign overpunch is a byte-value convention, not a text decode: the
 overpunched digit byte's zone nibble (high 4 bits) carries the sign
@@ -174,3 +174,26 @@ def decode_binary(raw: bytes, *, signed: bool, scale: int) -> Decimal:
     """
     unscaled = int.from_bytes(raw, byteorder="big", signed=signed)
     return Decimal(unscaled) / (Decimal(10) ** scale)
+
+
+def decode_alpha(
+    raw: bytes, *, codepage: str = DEFAULT_CODEPAGE, strip_trailing_spaces: bool = False
+) -> str:
+    """Decode a plain alphanumeric (PIC X/A) field's raw bytes to text.
+
+    Args: raw (bytes): the field's own bytes.
+        codepage (str): EBCDIC code page; cp037 by default (decision 0010).
+        strip_trailing_spaces (bool): COBOL alphanumeric fields are
+            conventionally space-padded on the right, but stripping is
+            a transformation, not a decode - False (default) returns
+            the exact fixed-width value, padding included; opt in
+            explicitly for a trimmed value, never silently.
+    Returns: str: the decoded text.
+    Example:
+        >>> decode_alpha(bytes([0xC1, 0xC2, 0x40, 0x40]))
+        'AB  '
+        >>> decode_alpha(bytes([0xC1, 0xC2, 0x40, 0x40]), strip_trailing_spaces=True)
+        'AB'
+    """
+    text = raw.decode(codepage)
+    return text.rstrip(" ") if strip_trailing_spaces else text

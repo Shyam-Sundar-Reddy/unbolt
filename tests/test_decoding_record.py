@@ -232,3 +232,59 @@ def test_sign_is_leading_overpunch_decodes_end_to_end() -> None:
     values = decode_record(root, data)
 
     assert values == {"REC.A": Decimal("-123")}
+
+
+def test_alpha_field_decodes_end_to_end_with_padding_preserved() -> None:
+    source = """
+    01  REC.
+        05  A PIC X(5).
+        05  B PIC 9(2).
+    """
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+    assert root.byte_size == 7
+
+    data = "HI   ".encode("cp037") + "42".encode("cp037")
+
+    values = decode_record(root, data)
+
+    assert values == {"REC.A": "HI   ", "REC.B": Decimal("42")}
+
+
+def test_alpha_field_decodes_end_to_end_with_strip_trailing_spaces() -> None:
+    source = "01  REC.\n    05  A PIC X(5).\n"
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    root = dsl.roots[0]
+
+    data = "HI   ".encode("cp037")
+
+    values = decode_record(root, data, strip_trailing_spaces=True)
+
+    assert values == {"REC.A": "HI"}
+
+
+def test_redefines_overlay_fixture_decodes_fully_now_that_alpha_is_supported() -> None:
+    # PAYMENT-TYPE and CARD-NUMBER (both alphanumeric) were the reason
+    # this real fixture couldn't fully decode before alpha decode
+    # existed - now every field in it is supported, including the two
+    # REDEFINES siblings each correctly reading their own view of the
+    # same shared bytes.
+    root = _root("redefines_overlay")
+    assert root.byte_size == 30
+
+    payment_type = "C".encode("cp037")
+    payment_amount = "12345678".encode("cp037") + bytes([0xC9])  # +1234567.89
+    overlay_region = "12345678901234567890".encode("cp037")  # shared by CARD-DATA/CHECK-DATA
+    data = payment_type + payment_amount + overlay_region
+    assert len(data) == 30
+
+    values = decode_record(root, data)
+
+    assert values == {
+        "PAYMENT-RECORD.PAYMENT-TYPE": "C",
+        "PAYMENT-RECORD.PAYMENT-AMOUNT": Decimal("1234567.89"),
+        "PAYMENT-RECORD.CARD-DATA.CARD-NUMBER": "1234567890123456",
+        "PAYMENT-RECORD.CARD-DATA.CARD-EXP": Decimal("7890"),
+        "PAYMENT-RECORD.CHECK-DATA.CHECK-NUMBER": Decimal("1234567890"),
+        "PAYMENT-RECORD.CHECK-DATA.BANK-ROUTING": Decimal("123456789"),
+    }

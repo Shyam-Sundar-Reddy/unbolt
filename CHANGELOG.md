@@ -133,6 +133,18 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Dsl.variant`/`Dsl.schema_version` fields it deferred to this phase
   turned out not needed — variant identity lives in the config's own
   `VariantRule`, not embedded in `Dsl`.
+- Phase 9, fourth slice: alphanumeric (`PIC X`/`A`) field decode —
+  `decode_alpha()` in `unbolt.decoding`, exact fixed-width text
+  through the codepage; trailing-space stripping is opt-in
+  (`strip_trailing_spaces=`, default `False`), never silent, since
+  trimming is a transformation, not a decode. Closes a real gap left
+  open since Phase 8 (alphanumeric was explicitly out of scope there)
+  and the actual blocker for decoding a real `PIC X` discriminator
+  value from bytes. 7 new tests, including `redefines_overlay.cpy` —
+  a real fixture that couldn't fully decode before this slice because
+  it starts with an alphanumeric field — now decoding completely end
+  to end, including both `REDEFINES` siblings correctly reading their
+  own view of the same shared bytes.
 
 ## [0.1.1] - Released 2026-10-25
 

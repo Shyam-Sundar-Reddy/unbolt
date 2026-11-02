@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from unbolt.decoding.codecs import decode_binary, decode_display, decode_packed
+from unbolt.decoding.codecs import decode_alpha, decode_binary, decode_display, decode_packed
 from unbolt.exceptions import InvalidSignNibbleError
 
 
@@ -165,3 +165,21 @@ def test_binary_signed_positive_doubleword() -> None:
 
 def test_binary_scale_divides_the_unscaled_value() -> None:
     assert decode_binary(bytes([0x00, 0x7B]), signed=False, scale=2) == Decimal("1.23")
+
+
+def test_alpha_decodes_exact_fixed_width_value_including_padding() -> None:
+    assert decode_alpha(bytes([0xC1, 0xC2, 0x40, 0x40])) == "AB  "
+
+
+def test_alpha_strip_trailing_spaces_is_opt_in() -> None:
+    assert decode_alpha(bytes([0xC1, 0xC2, 0x40, 0x40]), strip_trailing_spaces=True) == "AB"
+
+
+def test_alpha_strip_trailing_spaces_does_not_touch_internal_spaces() -> None:
+    # "A B" - internal space must survive stripping, only trailing ones go.
+    value = decode_alpha(bytes([0xC1, 0x40, 0xC2, 0x40, 0x40]), strip_trailing_spaces=True)
+    assert value == "A B"
+
+
+def test_alpha_empty_bytes_decodes_to_empty_string() -> None:
+    assert decode_alpha(b"") == ""

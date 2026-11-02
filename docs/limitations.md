@@ -14,18 +14,22 @@ trusting, don't just re-read the code.
   parser reads copybook *source text* (always plain text), never actual
   mainframe *data records*. Real byte decoding is a separate module
   (`unbolt.decoding`, Phase 8) with its own, narrower scope (next item).
-- **Record decoding (`unbolt.decoding`, Phase 8) covers DISPLAY, COMP-3,
-  and binary so far.** `decode_record()` decodes plain `DISPLAY` (zoned
-  decimal) fields — unsigned, and signed via EBCDIC overpunch or `SIGN
-  IS SEPARATE` (`cp037` default, decision 0010), either leading or
-  trailing (`FieldNode.sign_leading`, DSL v2); `COMP-3`/`PACKED-DECIMAL`
-  fields (two digits per byte, sign in the last nibble); and `COMP`/
-  `COMP-4`/`COMP-5`/`BINARY` fields (big-endian two's-complement/
-  unsigned integers) — all including through nested groups and
-  `REDEFINES`'s shared offsets. It does **not yet** decode: `COMP-1`/
-  `COMP-2` (float — no safe default, goal.md §5.4), alphanumeric/edited/
-  national fields, or `OCCURS` tables — each raises
-  `UnsupportedDecodeError` rather than guessing. A fixed-length record
+- **Record decoding (`unbolt.decoding`, Phase 8) covers DISPLAY,
+  COMP-3, binary, and plain alphanumeric so far.** `decode_record()`
+  decodes plain `DISPLAY` (zoned decimal) fields — unsigned, and
+  signed via EBCDIC overpunch or `SIGN IS SEPARATE` (`cp037` default,
+  decision 0010), either leading or trailing (`FieldNode.sign_leading`,
+  DSL v2); `COMP-3`/`PACKED-DECIMAL` fields (two digits per byte, sign
+  in the last nibble); `COMP`/`COMP-4`/`COMP-5`/`BINARY` fields
+  (big-endian two's-complement/unsigned integers); and plain
+  alphanumeric (`PIC X`/`A`) fields as exact fixed-width text —
+  trailing-space stripping is opt-in (`strip_trailing_spaces=`), never
+  silent, since trimming is a transformation, not a decode — all
+  including through nested groups and `REDEFINES`'s shared offsets. It
+  does **not yet** decode: `COMP-1`/`COMP-2` (float — no safe default,
+  goal.md §5.4), edited pictures or national/DBCS fields, or `OCCURS`
+  tables — each raises `UnsupportedDecodeError` rather than guessing.
+  A fixed-length record
   whose byte length doesn't match its layout is rejected outright
   (`RecordLengthMismatchError`), never best-effort decoded (decision
   0010). `decode_rdw_record()` parses and validates a 4-byte RDW
@@ -118,15 +122,16 @@ dropped — never silently misconverted:
   only — no runtime variant selection.** `load_variant_config()` and
   `validate_variant_config()` exist, and can be cross-checked against
   real parsed copybooks (discriminator field present, not ambiguous,
-  every rule's variant has a matching DSL). But nothing yet actually
-  decodes a discriminator value from real bytes and dispatches to the
-  matching variant's copybook — that's genuinely blocked on
-  alphanumeric field decode, since most real discriminator fields are
-  `PIC X`, and `unbolt.decoding` doesn't decode alphanumeric fields
-  yet (see above). `UnknownVariant`-with-raw-bytes-preserved fallback
-  behavior is specified in the config's `unknown_variant` policy field
-  but not implemented. `unbolt check` always compares exactly two
-  whole copybook files directly; it doesn't consult a variant config.
+  every rule's variant has a matching DSL). Alphanumeric field decode
+  now exists (see above), which was the blocker for decoding a real
+  `PIC X` discriminator value — but nothing yet actually dispatches a
+  decoded discriminator value to the matching variant's copybook,
+  since that dispatch logic itself isn't built yet, independent of the
+  decode gap being closed. `UnknownVariant`-with-raw-bytes-preserved
+  fallback behavior is specified in the config's `unknown_variant`
+  policy field but not implemented. `unbolt check` always compares
+  exactly two whole copybook files directly; it doesn't consult a
+  variant config.
 
 ## Performance
 
