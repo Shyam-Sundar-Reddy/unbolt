@@ -1,10 +1,9 @@
 """Variant config: JSON declaring a discriminator field and the named
-variants it selects among (decision 0012). Load/validate only in this
-slice - runtime variant selection (decode the discriminator, dispatch
-to the matching copybook, UnknownVariant fallback with raw bytes
-preserved) is a later slice, gated on alphanumeric field decode
-existing (most real discriminator fields are PIC X, not numeric, and
-unbolt.decoding doesn't decode alphanumeric fields yet).
+variants it selects among (decision 0012). Load/validate only - the
+discriminator field's consistency across every variant (same offset,
+byte size, PIC, usage, sign) is checked here because runtime dispatch
+(variants/dispatch.py) depends on it: the discriminator must be
+readable the same way before the full layout is even known.
 """
 
 import json
@@ -13,11 +12,21 @@ from pathlib import Path
 from typing import Literal
 
 from unbolt.dsl.schema import Dsl, FieldNode
-from unbolt.dsl.walk import walk_from
+from unbolt.dsl.walk import fields_named
 from unbolt.exceptions import InvalidVariantConfigError
 
 UnknownVariantPolicy = Literal["reject", "passthrough"]
 _ALLOWED_POLICIES: tuple[UnknownVariantPolicy, ...] = ("reject", "passthrough")
+_DISCRIMINATOR_SIGNATURE_FIELDS = (
+    "offset",
+    "byte_size",
+    "pic",
+    "usage",
+    "signed",
+    "scale",
+    "sign_separate",
+    "sign_leading",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,15 +130,21 @@ def validate_variant_config(config: VariantConfig, dsls: dict[str, Dsl]) -> None
             never touches the filesystem itself.
     Raises:
         InvalidVariantConfigError: a rule's variant name has no entry
-            in `dsls`, or that Dsl has no field named
-            `config.discriminator` anywhere in its tree, or more than
-            one (an ambiguity this refuses to guess through rather
-            than silently picking one).
+            in `dsls`; that Dsl has no field named `config.discriminator`
+            anywhere in its tree, or more than one (an ambiguity this
+            refuses to guess through rather than silently picking one);
+            the matched field is a group, COMP-1/COMP-2, or an OCCURS
+            table (none of those is a single decodable value); or the
+            field's offset/byte size/PIC/usage/sign differs from the
+            same field in another variant - runtime dispatch (reading
+            the discriminator before knowing which full layout applies)
+            needs it identical everywhere.
     """
+    reference: FieldNode | None = None
     for rule in config.rules:
         if rule.name not in dsls:
             raise InvalidVariantConfigError(f"variant {rule.name!r} has no parsed copybook")
-        matches = _fields_named(dsls[rule.name], config.discriminator)
+        matches = fields_named(dsls[rule.name], config.discriminator)
         if not matches:
             raise InvalidVariantConfigError(
                 f"variant {rule.name!r}: discriminator field {config.discriminator!r} "
@@ -140,7 +155,22 @@ def validate_variant_config(config: VariantConfig, dsls: dict[str, Dsl]) -> None
                 f"variant {rule.name!r}: discriminator field {config.discriminator!r} "
                 f"is ambiguous ({len(matches)} fields share that name)"
             )
+        node = matches[0]
+        if node.pic is None or node.occurs is not None:
+            raise InvalidVariantConfigError(
+                f"variant {rule.name!r}: discriminator field {config.discriminator!r} "
+                "must be a single elementary field, not a group, COMP-1/COMP-2, "
+                "or an OCCURS table"
+            )
+        if reference is None:
+            reference = node
+        elif _discriminator_signature(node) != _discriminator_signature(reference):
+            raise InvalidVariantConfigError(
+                f"variant {rule.name!r}: discriminator field {config.discriminator!r} "
+                "has a different offset/type than in other variants - runtime "
+                "dispatch needs it identical across every variant"
+            )
 
 
-def _fields_named(dsl: Dsl, name: str) -> list[FieldNode]:
-    return [node for root in dsl.roots for node, _ in walk_from(root) if node.name == name]
+def _discriminator_signature(node: FieldNode) -> tuple[object, ...]:
+    return tuple(getattr(node, name) for name in _DISCRIMINATOR_SIGNATURE_FIELDS)

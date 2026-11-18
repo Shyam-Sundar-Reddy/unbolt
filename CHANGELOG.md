@@ -145,6 +145,27 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it starts with an alphanumeric field — now decoding completely end
   to end, including both `REDEFINES` siblings correctly reading their
   own view of the same shared bytes.
+- Phase 9, fifth slice — **Phase 9 complete**: runtime variant
+  dispatch. `unbolt.variants.select_variant(config, dsls, data)`
+  decodes the discriminator field directly, matches it against each
+  rule's value (`Decimal`-normalized for a numeric discriminator —
+  `"01"` and `"1"` match the same rule — exact string for
+  alphanumeric), and dispatches to the matched variant's own
+  `decode_record()`. No match: `UnknownVariantError` or a
+  `VariantSelection` with the raw bytes preserved, per the config's
+  own `unknown_variant` policy, never an implicit default.
+  `validate_variant_config()` (which `select_variant()` always runs
+  first, never skippable) now also requires the discriminator to be a
+  single elementary field — not a group, `COMP-1`/`COMP-2`, or an
+  `OCCURS` table — with an *identical* offset/byte size/PIC/usage/sign
+  across every variant, since dispatch reads it before knowing which
+  full layout even applies. New shared `decode_field()` in
+  `unbolt.decoding` (factored out of `decode_record()`'s per-leaf
+  dispatch) so the full-record walk and this discriminator-only decode
+  use exactly the same decodability rules. New `UnknownVariantError`.
+  8 new tests. No CLI/MCP wrapper yet, consistent with
+  `decode_record()`/`decode_rdw_record()` themselves — see
+  `docs/limitations.md`.
 
 ## [0.1.1] - Released 2026-10-25
 

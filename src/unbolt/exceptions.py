@@ -43,8 +43,8 @@ class InvalidSignNibbleError(UnboltError):
 
 class UnsupportedDecodeError(UnboltError):
     """The field or clause combination isn't decodable yet (COMP-1/
-    COMP-2 - no safe default, goal.md §5.4; alphanumeric/edited/
-    national fields; OCCURS tables - later Phase 8 slices)."""
+    COMP-2 - no safe default, goal.md §5.4; edited/national fields;
+    OCCURS tables - later Phase 8 slices)."""
 
 
 class RdwHeaderError(UnboltError):
@@ -67,5 +67,14 @@ class IncompatibleChangeError(UnboltError):
 class InvalidVariantConfigError(UnboltError):
     """A variant config's JSON shape is malformed (decision 0012), or
     it doesn't match the copybooks it's validated against (a
-    referenced variant is missing, or the discriminator field isn't
-    present in one of them)."""
+    referenced variant is missing, the discriminator field isn't
+    present or is ambiguous in one of them, or it has a different
+    offset/type across variants - runtime dispatch needs it identical
+    everywhere)."""
+
+
+class UnknownVariantError(UnboltError):
+    """select_variant() decoded a discriminator value that matches no
+    configured variant, and the config's unknown_variant policy is
+    "reject" (use "passthrough" to get a VariantSelection with
+    variant_name=None and the raw bytes preserved instead)."""

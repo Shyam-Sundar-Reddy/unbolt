@@ -118,20 +118,33 @@ dropped — never silently misconverted:
   first root** (`dsl.roots[0]`) — a copybook with multiple `01`/`77`
   top-level items only has its first one checked; multi-root support
   isn't implemented.
-- **Variant config (decision 0012, JSON not YAML) is load/validate
-  only — no runtime variant selection.** `load_variant_config()` and
-  `validate_variant_config()` exist, and can be cross-checked against
-  real parsed copybooks (discriminator field present, not ambiguous,
-  every rule's variant has a matching DSL). Alphanumeric field decode
-  now exists (see above), which was the blocker for decoding a real
-  `PIC X` discriminator value — but nothing yet actually dispatches a
-  decoded discriminator value to the matching variant's copybook,
-  since that dispatch logic itself isn't built yet, independent of the
-  decode gap being closed. `UnknownVariant`-with-raw-bytes-preserved
-  fallback behavior is specified in the config's `unknown_variant`
-  policy field but not implemented. `unbolt check` always compares
-  exactly two whole copybook files directly; it doesn't consult a
-  variant config.
+- **Variant config + runtime dispatch (decision 0012) is library-only,
+  no CLI/MCP wrapper.** `load_variant_config()`, `validate_variant_config()`
+  (now also checking the discriminator field is a single elementary
+  item — not a group, not `COMP-1`/`COMP-2`, not an `OCCURS` table —
+  and has the *identical* offset/byte size/PIC/usage/sign across every
+  variant, since dispatch has to read it before knowing which full
+  layout applies), and `select_variant()` (decodes a real discriminator
+  value and dispatches to the matching variant's `decode_record()`,
+  `UnknownVariantError`/passthrough per the config's policy) all exist
+  and are tested. There's no `unbolt`-CLI-command or MCP-tool wrapper
+  for this yet — consistent with `decode_record()`/`decode_rdw_record()`
+  themselves, which have never had one either; all of `unbolt.decoding`
+  and `unbolt.variants`' dispatch are library-only so far. `unbolt check`
+  (the one variant-adjacent CLI command/MCP tool that does exist) still
+  always compares exactly two whole copybook files directly; it doesn't
+  consult a variant config.
+- **Rename matching is name-only.** `select_variant()`'s discriminator
+  match is purely `decoded_value == rule.value` (Decimal-normalized for
+  numeric fields, exact string for alphanumeric) — there's no fuzzy or
+  case-insensitive matching, and a numeric discriminator's rule value
+  that isn't valid decimal text never matches anything (silently, by
+  design: an invalid comparison target is not the same claim as "this
+  variant"), rather than raising at dispatch time. If every rule's
+  value is malformed this surfaces as `UnknownVariantError`/passthrough,
+  not a clearer "config error," since dispatch doesn't re-validate
+  value parseability per decoded type — only `load_variant_config()`'s
+  shape checks run ahead of time.
 
 ## Performance
 

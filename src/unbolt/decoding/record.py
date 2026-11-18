@@ -118,6 +118,60 @@ def decode_rdw_record(
     )
 
 
+def decode_field(
+    node: FieldNode,
+    raw: bytes,
+    *,
+    label: str | None = None,
+    codepage: str = DEFAULT_CODEPAGE,
+    strip_trailing_spaces: bool = False,
+) -> object:
+    """Decode one elementary (non-group) field's own raw bytes.
+
+    Dispatches by PIC/USAGE to decode_alpha/decode_packed/decode_binary/
+    decode_display - the single place that decides "what kind of field
+    is this," shared by decode_record()'s per-leaf walk and
+    variants.dispatch's discriminator-only decode, so both use exactly
+    the same rules for what's decodable.
+
+    Args: node (FieldNode): the field to decode (must not be a group -
+            callers walk groups themselves before reaching a leaf).
+        raw (bytes): exactly this field's own bytes (node.byte_size long).
+        label (str | None): name to use in error messages; node.name if
+            not given (callers tracking a dotted path pass it explicitly).
+        codepage (str): EBCDIC code page; cp037 by default (decision 0010).
+        strip_trailing_spaces (bool): passed through to decode_alpha().
+    Returns: object: Decimal (DISPLAY/COMP-3/binary) or str (alphanumeric).
+    Raises:
+        UnsupportedDecodeError: node is COMP-1/COMP-2 (no PIC), edited/
+            national, or any other not-yet-decodable combination.
+    """
+    name = label if label is not None else node.name
+    if node.pic is None:
+        raise UnsupportedDecodeError(f"{name!r}: COMP-1/COMP-2 decode isn't supported yet")
+    if is_edited_pic(node.pic) or is_national_pic(node.pic):
+        raise UnsupportedDecodeError(f"{name!r}: edited/national field decode isn't supported yet")
+    if is_alpha_pic(node.pic):
+        return decode_alpha(raw, codepage=codepage, strip_trailing_spaces=strip_trailing_spaces)
+    if is_packed_usage(node.usage):
+        return decode_packed(raw, digits=node.digits, scale=node.scale)
+    if is_binary_usage(node.usage):
+        return decode_binary(raw, signed=node.signed, scale=node.scale)
+    if node.usage.upper() != "DISPLAY":
+        raise UnsupportedDecodeError(
+            f"{name!r}: only DISPLAY/COMP-3/binary/alphanumeric decode is "
+            f"supported in this slice, got {node.usage}"
+        )
+    return decode_display(
+        raw,
+        signed=node.signed,
+        sign_separate=node.sign_separate,
+        sign_leading=node.sign_leading,
+        scale=node.scale,
+        codepage=codepage,
+    )
+
+
 def _decode_node(
     node: FieldNode,
     path: str,
@@ -134,32 +188,7 @@ def _decode_node(
                 child, f"{path}.{child.name}", data, codepage, strip_trailing_spaces, values
             )
         return
-    if node.pic is None:
-        raise UnsupportedDecodeError(f"{path!r}: COMP-1/COMP-2 decode isn't supported yet")
-    if is_edited_pic(node.pic) or is_national_pic(node.pic):
-        raise UnsupportedDecodeError(f"{path!r}: edited/national field decode isn't supported yet")
     raw = data[node.offset : node.offset + node.byte_size]
-    if is_alpha_pic(node.pic):
-        values[path] = decode_alpha(
-            raw, codepage=codepage, strip_trailing_spaces=strip_trailing_spaces
-        )
-        return
-    if is_packed_usage(node.usage):
-        values[path] = decode_packed(raw, digits=node.digits, scale=node.scale)
-        return
-    if is_binary_usage(node.usage):
-        values[path] = decode_binary(raw, signed=node.signed, scale=node.scale)
-        return
-    if node.usage.upper() != "DISPLAY":
-        raise UnsupportedDecodeError(
-            f"{path!r}: only DISPLAY/COMP-3/binary decode is supported in this "
-            f"slice, got {node.usage}"
-        )
-    values[path] = decode_display(
-        raw,
-        signed=node.signed,
-        sign_separate=node.sign_separate,
-        sign_leading=node.sign_leading,
-        scale=node.scale,
-        codepage=codepage,
+    values[path] = decode_field(
+        node, raw, label=path, codepage=codepage, strip_trailing_spaces=strip_trailing_spaces
     )

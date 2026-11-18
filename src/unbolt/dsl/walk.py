@@ -29,3 +29,10 @@ def walk_from(root: FieldNode) -> list[tuple[FieldNode, str]]:
 def walk_fields(dsl: Dsl) -> list[tuple[FieldNode, str]]:
     """Every node in the tree paired with its dot-joined field_path."""
     return [pair for root in dsl.roots for pair in walk_from(root)]
+
+
+def fields_named(dsl: Dsl, name: str) -> list[FieldNode]:
+    """Every node anywhere in `dsl` whose own (undotted) name matches -
+    0, 1, or more than 1 (an ambiguity for the caller to decide about,
+    never silently resolved here by picking one)."""
+    return [node for node, _ in walk_fields(dsl) if node.name == name]

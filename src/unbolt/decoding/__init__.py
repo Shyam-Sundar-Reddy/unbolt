@@ -5,13 +5,14 @@ from unbolt.decoding.codecs import (
     decode_display,
     decode_packed,
 )
-from unbolt.decoding.record import decode_rdw_record, decode_record
+from unbolt.decoding.record import decode_field, decode_rdw_record, decode_record
 
 __all__ = [
     "DEFAULT_CODEPAGE",
     "decode_alpha",
     "decode_binary",
     "decode_display",
+    "decode_field",
     "decode_packed",
     "decode_rdw_record",
     "decode_record",
