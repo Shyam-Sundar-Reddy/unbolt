@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from unbolt.dsl import build_dsl  # noqa: E402
 from unbolt.generators.go import generate_go  # noqa: E402
+from unbolt.generators.go_decoder import generate_go_decoder  # noqa: E402
 from unbolt.generators.java import generate_java  # noqa: E402
 from unbolt.generators.resolve import resolve_mapping  # noqa: E402
 from unbolt.mapping import recommend_mappings  # noqa: E402
@@ -25,6 +26,40 @@ from unbolt.overrides import Overrides, apply_override  # noqa: E402
 from unbolt.parser import parse_copybook  # noqa: E402
 
 FIXTURES_DIR = ROOT / "fixtures"
+
+# Same bytes and expected values as
+# tests/test_decoding_record.py::test_flat_display_record_decodes_every_field_exactly -
+# this is a real round-trip check (ADR 0009: "not optional"), not just a compile check:
+# the generated Go must decode to the exact values Python's own decoder already verified.
+_FLAT_DISPLAY_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6,
+		0xF0, 0xF4, 0xD5,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xC9,
+	}
+	r, err := NewCustomerRecord(data)
+	if err != nil {
+		panic(err)
+	}
+	id, err := r.CustomerId()
+	if err != nil || id != 123456 {
+		panic(fmt.Sprintf("CustomerId: got (%v, %v), want (123456, nil)", id, err))
+	}
+	age, err := r.CustomerAge()
+	if err != nil || age != -45 {
+		panic(fmt.Sprintf("CustomerAge: got (%v, %v), want (-45, nil)", age, err))
+	}
+	bal, err := r.AccountBalance()
+	if err != nil || bal != 123456789 {
+		panic(fmt.Sprintf("AccountBalance: got (%v, %v), want (123456789, nil)", bal, err))
+	}
+	fmt.Println("flat_display Go decoder round-trip: OK")
+}
+"""
 
 
 def _overrides_for(name: str) -> Overrides:
@@ -88,8 +123,10 @@ def main() -> int:
     out_dir = ROOT / ".compile_check_tmp"
     go_dir = out_dir / "go"
     java_dir = out_dir / "java"
+    go_decoder_dir = out_dir / "go_decoder"
     go_dir.mkdir(parents=True, exist_ok=True)
     java_dir.mkdir(parents=True, exist_ok=True)
+    go_decoder_dir.mkdir(parents=True, exist_ok=True)
 
     ok = True
     for fixture in sorted(FIXTURES_DIR.glob("*.cpy")):
@@ -126,6 +163,28 @@ def main() -> int:
     )
     print("Java:", "OK" if java_passed else f"FAILED\n{java_output}")
     ok = ok and java_passed
+
+    # Go flyweight decoder (ADR 0009, Phase 10): flat_display.cpy is the
+    # only fixture inside this slice's current scope (flat, DISPLAY-only
+    # records) - a real round-trip check, not just compile: the running
+    # binary must decode to the exact values Python's own decoder gives.
+    flat_source = (FIXTURES_DIR / "flat_display.cpy").read_text()
+    flat_dsl = build_dsl(parse_copybook(flat_source), source_file="flat_display.cpy")
+    flat_resolved = resolve_mapping(recommend_mappings(flat_dsl, "go"), Overrides())
+    decoder_src = generate_go_decoder(flat_dsl, flat_resolved).replace(
+        "package generated", "package main", 1
+    )
+    (go_decoder_dir / "gen_decoder.go").write_text(decoder_src)
+    (go_decoder_dir / "main.go").write_text(_FLAT_DISPLAY_GO_MAIN)
+    decoder_passed, decoder_output = _run_docker(
+        "golang:1.23",
+        go_decoder_dir,
+        "go mod init tmp >/dev/null 2>&1 && go run .",
+    )
+    print("Go decoder round-trip:", "OK" if decoder_passed else f"FAILED\n{decoder_output}")
+    if decoder_passed:
+        print(decoder_output.strip())
+    ok = ok and decoder_passed
 
     shutil.rmtree(out_dir)
     return 0 if ok else 1

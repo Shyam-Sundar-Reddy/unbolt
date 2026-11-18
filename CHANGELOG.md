@@ -166,6 +166,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   8 new tests. No CLI/MCP wrapper yet, consistent with
   `decode_record()`/`decode_rdw_record()` themselves — see
   `docs/limitations.md`.
+- Phase 10, first slice: `generators/go_decoder.py`'s
+  `generate_go_decoder(dsl, resolved)` — a flyweight Go decoder (ADR
+  0009): a struct wrapping `[]byte`, one accessor method per field
+  reading straight from the buffer at its offset, zero allocation,
+  zero reflection. Scoped as narrowly as Phase 8's own first slice:
+  flat records only, `DISPLAY` fields only (unsigned + signed trailing
+  overpunch), plain integer-ladder Go types only. Reuses the exact Go
+  type `recommend_mappings`/`resolve_mapping` already chose, so this
+  and the plain-struct generator agree on every field's type. Wired
+  into `generate_code()` via a new `emit` parameter (`"types"` default,
+  `"decoder"` new); `target="java"` + `emit="decoder"` raises clearly
+  — no Java decoder generator yet. `tools/compile_check` now builds
+  *and runs* the generated decoder in a real `golang:1.23` Docker
+  container against the exact bytes the Python-side decoder's own test
+  already used, asserting both independently-written decoders agree
+  on every value (ADR 0009's round-trip acceptance criterion). 19 new
+  tests.
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -97,6 +97,24 @@ dropped — never silently misconverted:
   `ACCOUNT-ID` and `ACCOUNT_ID` both → `AccountId`) will silently
   collide. Explicitly out of scope per decision 0003, not yet raised
   as its own question.
+- **Go flyweight decoder (`emit="decoder"`, ADR 0009, Phase 10) covers
+  flat `DISPLAY`-only records so far — the narrowest possible slice.**
+  `generate_go_decoder()` emits a struct wrapping a `[]byte` plus one
+  accessor method per field, reading directly from the buffer with
+  zero allocation. It raises `UnsupportedDecodeError` (never guesses)
+  for: more than one DSL root; a scalar (non-group) root; nested
+  groups; `OCCURS`; `REDEFINES`; alphanumeric/edited/national fields;
+  any non-`DISPLAY` usage (`COMP`/`COMP-3`/`COMP-1`/`COMP-2`/binary —
+  none of the Python-side decoder's other supported usages have a Go
+  equivalent yet); `SIGN IS SEPARATE`/`SIGN IS LEADING`; and any
+  resolved Go type outside the plain `int8`..`int64`/`uint8`..`uint64`
+  ladder (`big.Int`, `string`, a forced `float32`/`float64` override —
+  none are wired up). `emit="decoder"` only supports `target="go"` —
+  there is no Java flyweight decoder generator yet. Verified with a
+  real round-trip, not just a compile check: `tools/compile_check`
+  builds and **runs** the generated decoder against real bytes in
+  Docker, asserting the decoded values match Python's own
+  `decode_record()` exactly (ADR 0009's stated acceptance criterion).
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

@@ -1,5 +1,6 @@
 from unbolt.generators.engine import generate_code
 from unbolt.generators.go import generate_go
+from unbolt.generators.go_decoder import generate_go_decoder
 from unbolt.generators.java import generate_java
 from unbolt.generators.naming import go_field_name, java_field_name
 from unbolt.generators.resolve import resolve_mapping
@@ -7,6 +8,7 @@ from unbolt.generators.resolve import resolve_mapping
 __all__ = [
     "generate_code",
     "generate_go",
+    "generate_go_decoder",
     "generate_java",
     "go_field_name",
     "java_field_name",

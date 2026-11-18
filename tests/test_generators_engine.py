@@ -1,7 +1,7 @@
 import pytest
 
 from unbolt.dsl import build_dsl
-from unbolt.exceptions import UnapprovedMappingError, UnknownTargetError
+from unbolt.exceptions import UnapprovedMappingError, UnknownTargetError, UnsupportedDecodeError
 from unbolt.generators import generate_code
 from unbolt.mapping import recommend_mappings
 from unbolt.overrides import Overrides, apply_override
@@ -44,3 +44,24 @@ def test_an_override_resolves_what_would_otherwise_be_unapproved() -> None:
     )
     files = generate_code(dsl, recommend_mappings(dsl, "go"), "go", overrides=overrides)
     assert "S float32" in files["gen.go"]
+
+
+def test_emit_decoder_returns_gen_decoder_go() -> None:
+    dsl = _dsl("01 REC.\n    05 AGE PIC S9(3).")
+    files = generate_code(dsl, recommend_mappings(dsl, "go"), "go", emit="decoder")
+    assert set(files) == {"gen_decoder.go"}
+    assert "func (r *Rec) Age() (int16, error) {" in files["gen_decoder.go"]
+
+
+def test_emit_decoder_rejects_java_target() -> None:
+    dsl = _dsl("01 REC.\n    05 AGE PIC S9(3).")
+    with pytest.raises(UnsupportedDecodeError, match="only supports target='go'"):
+        generate_code(dsl, recommend_mappings(dsl, "java"), "java", emit="decoder")
+
+
+def test_emit_decoder_propagates_out_of_scope_errors() -> None:
+    # Scalar root (no group) is outside the Go decoder's current slice -
+    # generate_code must not swallow or reinterpret that error.
+    dsl = _dsl("01 X PIC 9(3).")
+    with pytest.raises(UnsupportedDecodeError, match="root must be a group"):
+        generate_code(dsl, recommend_mappings(dsl, "go"), "go", emit="decoder")
