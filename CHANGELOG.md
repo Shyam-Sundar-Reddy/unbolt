@@ -225,6 +225,24 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hand-computed and cross-checked against `decode_record()` directly
   first. 1 new test (net, after retiring two now-obsolete
   "unsupported" tests and adding three real ones).
+- Phase 10, fifth slice: `big.Int`/wider-type support for the Go
+  flyweight decoder. A resolved `big.Int` field (reachable past
+  18-19 digits, or via a forced override) reuses the same per-usage
+  dispatch as the fixed-width types, with its own shared Go helpers —
+  `decodeDisplayDigitsBig()` for plain-digit accumulation across all
+  five DISPLAY sign-placement bodies, and a separate
+  `decodePackedDecimalBig()` for `COMP-3` (kept distinct from the
+  int64 helper so the common/small case doesn't pay `big.Int`
+  overhead). `COMP`/`COMP-4`/`COMP-5`/`BINARY` never needs `big.Int` —
+  `datatypes/sizing.py`'s binary tier already caps at 8 bytes/`uint64`
+  range — so a forced `big.Int` override on a binary field now raises
+  rather than guessing. `tools/compile_check` gained a fifth real
+  round-trip: a synthetic record with one field per supported usage/
+  sign placement, each wide enough (19-20 digits) to genuinely need
+  `big.Int`, its expected bytes hand-computed and cross-checked
+  against `decode_record()` directly first. 6 new tests (net, after
+  retiring the now-obsolete "big.Int isn't supported" test and adding
+  seven real ones).
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -186,6 +186,76 @@ func main() {
 """
 
 
+# big.Int (Phase 10, fifth slice): one field per supported usage/sign
+# placement, each with a digit count that genuinely exceeds int64/
+# uint64 range (20 digits unsigned, 19 signed - S9(19)'s magnitude
+# exceeds int64's but still fits in 19 digits, so the ladder has to
+# pick big.Int, not just int64). No fixture has a field this wide - a
+# synthetic copybook, bytes hand-computed and cross-checked against
+# decode_record() directly before writing them here.
+_BIGINT_SOURCE = """01 REC.
+    05 UNSIGNED-BIG PIC 9(20).
+    05 TRAILING-OVP-BIG PIC S9(19).
+    05 LEADING-OVP-BIG PIC S9(19) SIGN IS LEADING.
+    05 TRAILING-SEP-BIG PIC S9(19) SIGN IS SEPARATE.
+    05 LEADING-SEP-BIG PIC S9(19) SIGN IS LEADING SEPARATE.
+    05 PACKED-BIG PIC S9(19) COMP-3.
+"""
+
+_BIGINT_GO_MAIN = """package main
+
+import (
+	"fmt"
+	"math/big"
+)
+
+func main() {
+	data := []byte{
+		// UNSIGNED-BIG 12345678901234567890 (20 bytes)
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		// TRAILING-OVP-BIG -1234567890123456789 (19 bytes)
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xD9,
+		// LEADING-OVP-BIG -9876543210987654321 (19 bytes)
+		0xD9, 0xF8, 0xF7, 0xF6, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0,
+		0xF9, 0xF8, 0xF7, 0xF6, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1,
+		// TRAILING-SEP-BIG +1111111111111111111 (20 bytes)
+		0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1,
+		0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0x4E,
+		// LEADING-SEP-BIG -2222222222222222222 (20 bytes)
+		0x60, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2,
+		0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2,
+		// PACKED-BIG +9999999999999999999 (10 bytes)
+		0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9C,
+	}
+	r, err := NewRec(data)
+	if err != nil {
+		panic(err)
+	}
+	cases := []struct {
+		name string
+		get  func() (*big.Int, error)
+		want string
+	}{
+		{"UnsignedBig", r.UnsignedBig, "12345678901234567890"},
+		{"TrailingOvpBig", r.TrailingOvpBig, "-1234567890123456789"},
+		{"LeadingOvpBig", r.LeadingOvpBig, "-9876543210987654321"},
+		{"TrailingSepBig", r.TrailingSepBig, "1111111111111111111"},
+		{"LeadingSepBig", r.LeadingSepBig, "-2222222222222222222"},
+		{"PackedBig", r.PackedBig, "9999999999999999999"},
+	}
+	for _, c := range cases {
+		v, err := c.get()
+		if err != nil || v.String() != c.want {
+			panic(fmt.Sprintf("%s: got (%v, %v), want (%s, nil)", c.name, v, err, c.want))
+		}
+	}
+	fmt.Println("big.Int Go decoder round-trip: OK")
+}
+"""
+
+
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
         return Overrides()
@@ -309,13 +379,15 @@ def main() -> int:
 
     # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
     # not just compiles - the running binary must decode to the exact
-    # values Python's own decode_record() already verified. Four cases:
+    # values Python's own decode_record() already verified. Five cases:
     # flat_display.cpy (DISPLAY only), a synthetic DISPLAY+COMP-3+binary
     # record (no existing fixture combines those three within this
     # slice's scope, since mixed_usage.cpy also has COMP-1/COMP-2, which
-    # isn't supported yet), nested_groups.cpy (nested group structs), and
-    # a synthetic record covering all three non-default sign placements
-    # (no fixture uses SIGN at all).
+    # isn't supported yet), nested_groups.cpy (nested group structs), a
+    # synthetic record covering all three non-default sign placements
+    # (no fixture uses SIGN at all), and a synthetic record covering
+    # big.Int across every supported usage/sign placement (no fixture
+    # has a field wide enough to need it).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
@@ -329,6 +401,9 @@ def main() -> int:
     )
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "sign_placements", _SIGN_PLACEMENTS_SOURCE, _SIGN_PLACEMENTS_GO_MAIN
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "bigint", _BIGINT_SOURCE, _BIGINT_GO_MAIN
     )
 
     shutil.rmtree(out_dir)

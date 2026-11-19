@@ -18,16 +18,24 @@ table needed for just two values, the same reasoning that keeps
 alphanumeric field decode (which would need the full table) out of
 this slice.
 
+A resolved big.Int field (never decision 0004's default for a plain
+integer - the ladder tops out at int64/uint64 - but reachable via a
+forced override, or genuinely needed past 18-19 digits) reuses the
+same per-usage dispatch as the fixed-width types, just with big.Int
+arithmetic and its own shared helpers (decodeDisplayDigitsBig,
+decodePackedDecimalBig) - COMP/COMP-4/COMP-5/BINARY never needs it,
+since datatypes/sizing.py's binary tier already caps at 8 bytes/
+uint64 range.
+
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
 generation instead of Python-side decode: OCCURS and REDEFINES fields;
 DISPLAY (unsigned, and signed via trailing/leading overpunch or
 trailing/leading SIGN IS SEPARATE), COMP-3/PACKED-DECIMAL, and
-COMP/COMP-4/COMP-5/BINARY leaf fields; and only integer-ladder Go
-types up to int64/uint64 (no big.Int/string/float - decision 0004's
-default candidate resolution never picks those for a plain integer
-field anyway, but a forced override could). Later Phase 10 slices lift the
-remaining restrictions one at a time.
+COMP/COMP-4/COMP-5/BINARY leaf fields; and string/float resolved types
+(decision 0004's default candidate resolution never picks those for a
+plain integer field anyway, but a forced override could). Later Phase
+10 slices lift the remaining restrictions one at a time.
 """
 
 from unbolt.datatypes.sizing import (
@@ -44,8 +52,62 @@ from unbolt.generators.naming import go_field_name
 _INTEGER_GO_TYPES = frozenset(
     {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"}
 )
+_BIG_INT_GO_TYPE = "big.Int"
 _BINARY_UINT_READER = {2: "Uint16", 4: "Uint32", 8: "Uint64"}
 _BINARY_SIGNED_CAST = {2: "int16", 4: "int32", 8: "int64"}
+
+_DISPLAY_DIGITS_BIG_HELPER = """func decodeDisplayDigitsBig(digits []byte) (*big.Int, error) {
+\tv := new(big.Int)
+\tten := big.NewInt(10)
+\tfor _, b := range digits {
+\t\tif b < 0xF0 || b > 0xF9 {
+\t\t\treturn nil, fmt.Errorf("byte %#02x is not a DISPLAY digit", b)
+\t\t}
+\t\tv.Mul(v, ten)
+\t\tv.Add(v, big.NewInt(int64(b&0x0F)))
+\t}
+\treturn v, nil
+}"""
+
+_PACKED_DECIMAL_BIG_HELPER = """func decodePackedDecimalBig(
+\traw []byte, digits int,
+) (*big.Int, error) {
+\ttotalNibbles := len(raw) * 2
+\tpad := totalNibbles - 1 - digits
+\tv := new(big.Int)
+\tten := big.NewInt(10)
+\tnegative := false
+\tnibbleIndex := 0
+\tfor _, b := range raw {
+\t\tfor _, n := range [2]byte{b >> 4, b & 0x0F} {
+\t\t\tswitch {
+\t\t\tcase nibbleIndex == totalNibbles-1:
+\t\t\t\tswitch n {
+\t\t\t\tcase 0xC, 0xF:
+\t\t\t\tcase 0xD:
+\t\t\t\t\tnegative = true
+\t\t\t\tdefault:
+\t\t\t\t\treturn nil, fmt.Errorf("packed decimal: unrecognized sign nibble %#x", n)
+\t\t\t\t}
+\t\t\tcase nibbleIndex < pad:
+\t\t\t\tif n != 0 {
+\t\t\t\t\treturn nil, fmt.Errorf("packed decimal: non-zero leading pad nibble %#x", n)
+\t\t\t\t}
+\t\t\tdefault:
+\t\t\t\tif n > 9 {
+\t\t\t\t\treturn nil, fmt.Errorf("packed decimal: non-digit nibble %#x", n)
+\t\t\t\t}
+\t\t\t\tv.Mul(v, ten)
+\t\t\t\tv.Add(v, big.NewInt(int64(n)))
+\t\t\t}
+\t\t\tnibbleIndex++
+\t\t}
+\t}
+\tif negative {
+\t\tv.Neg(v)
+\t}
+\treturn v, nil
+}"""
 
 _PACKED_DECIMAL_HELPER = """func decodePackedDecimal(raw []byte, digits int) (int64, error) {
 \ttotalNibbles := len(raw) * 2
@@ -122,17 +184,23 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
     struct_name = _render_group(root, root.name, resolved, needs, struct_decls, accessor_blocks)
     accessor_blocks.insert(0, _root_constructor(struct_name, root.byte_size))
 
-    imports = ['"fmt"']
+    imports = {'"fmt"'}
     if "binary" in needs:
-        imports.insert(0, '"encoding/binary"')
+        imports.add('"encoding/binary"')
+    if "bigint" in needs:
+        imports.add('"math/big"')
     header = [
         "package generated",
         "",
-        "import (\n" + "\n".join(f"\t{imp}" for imp in imports) + "\n)",
+        "import (\n" + "\n".join(f"\t{imp}" for imp in sorted(imports)) + "\n)",
     ]
     blocks = struct_decls + accessor_blocks
     if "packed" in needs:
         blocks.append(_PACKED_DECIMAL_HELPER)
+    if "bigint_display" in needs:
+        blocks.append(_DISPLAY_DIGITS_BIG_HELPER)
+    if "bigint_packed" in needs:
+        blocks.append(_PACKED_DECIMAL_BIG_HELPER)
     return "\n".join(header) + "\n\n" + "\n\n".join(blocks) + "\n"
 
 
@@ -226,14 +294,18 @@ def _render_leaf_accessor(
     # field - the Go type is plain int64; the caller already knows the
     # scale from the DSL/report (same convention generate_go() uses).
     go_type = "int64" if resolved_type == "int64 (scaled)" else resolved_type
-    if go_type not in _INTEGER_GO_TYPES:
+    if go_type != _BIG_INT_GO_TYPE and go_type not in _INTEGER_GO_TYPES:
         raise UnsupportedDecodeError(
             f"go decoder: resolved type {resolved_type!r} for {field_path!r} isn't "
-            "supported in this slice (only int8..int64/uint8..uint64, or a scaled int64)"
+            "supported in this slice (only int8..int64/uint8..uint64/big.Int, or a "
+            "scaled int64)"
         )
 
     method_name = go_field_name(node.name)
     start, end = node.offset, node.offset + node.byte_size
+
+    if go_type == _BIG_INT_GO_TYPE:
+        return _render_bigint_leaf_accessor(node, method_name, start, end, struct_name, needs)
 
     if is_packed_usage(node.usage):
         needs.add("packed")
@@ -259,6 +331,144 @@ def _render_leaf_accessor(
     return (
         f"func (r *{struct_name}) {method_name}() ({go_type}, error) {{\n"
         f"\traw := r.buf[{start}:{end}]\n" + body + "}"
+    )
+
+
+def _render_bigint_leaf_accessor(
+    node: FieldNode,
+    method_name: str,
+    start: int,
+    end: int,
+    struct_name: str,
+    needs: set[str],
+) -> str:
+    needs.add("bigint")
+    if is_packed_usage(node.usage):
+        needs.add("bigint_packed")
+        body = _packed_body_big(method_name, node.digits)
+    elif node.usage.upper() == "DISPLAY":
+        needs.add("bigint_display")
+        if not node.signed:
+            body = _unsigned_display_body_big(method_name)
+        elif node.sign_separate:
+            body = _separate_sign_display_body_big(method_name, node.sign_leading)
+        elif node.sign_leading:
+            body = _leading_overpunch_display_body_big(method_name)
+        else:
+            body = _signed_display_body_big(method_name)
+    else:
+        raise UnsupportedDecodeError(
+            f"go decoder: big.Int is only supported for DISPLAY/COMP-3 fields in this "
+            f"slice, got {node.usage!r} for {node.name!r}"
+        )
+
+    return (
+        f"func (r *{struct_name}) {method_name}() (*big.Int, error) {{\n"
+        f"\traw := r.buf[{start}:{end}]\n" + body + "}"
+    )
+
+
+def _unsigned_display_body_big(method_name: str) -> str:
+    return (
+        "\tv, err := decodeDisplayDigitsBig(raw)\n"
+        "\tif err != nil {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        "\treturn v, nil\n"
+    )
+
+
+def _signed_display_body_big(method_name: str) -> str:
+    return (
+        "\tlead := raw[:len(raw)-1]\n"
+        "\tlast := raw[len(raw)-1]\n"
+        "\tv, err := decodeDisplayDigitsBig(lead)\n"
+        "\tif err != nil {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        "\tzone := last & 0xF0\n"
+        "\tdigit := last & 0x0F\n"
+        "\tif digit > 9 {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: last byte %#02x has a non-digit value '
+        'nibble %d", last, digit)\n'
+        "\t}\n"
+        "\tv.Mul(v, big.NewInt(10))\n"
+        "\tv.Add(v, big.NewInt(int64(digit)))\n"
+        "\tswitch zone {\n"
+        "\tcase 0xC0, 0xF0:\n"
+        "\t\t// positive\n"
+        "\tcase 0xD0:\n"
+        "\t\tv.Neg(v)\n"
+        "\tdefault:\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: last byte %#02x has an unrecognized sign '
+        'nibble %#02x", last, zone)\n'
+        "\t}\n"
+        "\treturn v, nil\n"
+    )
+
+
+def _leading_overpunch_display_body_big(method_name: str) -> str:
+    return (
+        "\tfirst := raw[0]\n"
+        "\trest := raw[1:]\n"
+        "\tzone := first & 0xF0\n"
+        "\tdigit := first & 0x0F\n"
+        "\tif digit > 9 {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: first byte %#02x has a non-digit value '
+        'nibble %d", first, digit)\n'
+        "\t}\n"
+        "\ttail, err := decodeDisplayDigitsBig(rest)\n"
+        "\tif err != nil {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        "\tscale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(len(rest))), nil)\n"
+        "\tv := new(big.Int).Mul(big.NewInt(int64(digit)), scale)\n"
+        "\tv.Add(v, tail)\n"
+        "\tswitch zone {\n"
+        "\tcase 0xC0, 0xF0:\n"
+        "\t\t// positive\n"
+        "\tcase 0xD0:\n"
+        "\t\tv.Neg(v)\n"
+        "\tdefault:\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: first byte %#02x has an unrecognized sign '
+        'nibble %#02x", first, zone)\n'
+        "\t}\n"
+        "\treturn v, nil\n"
+    )
+
+
+def _separate_sign_display_body_big(method_name: str, sign_leading: bool) -> str:
+    split = (
+        "sign, digits := raw[0], raw[1:]"
+        if sign_leading
+        else "digits, sign := raw[:len(raw)-1], raw[len(raw)-1]"
+    )
+    return (
+        f"\t{split}\n"
+        "\tv, err := decodeDisplayDigitsBig(digits)\n"
+        "\tif err != nil {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        "\tswitch sign {\n"
+        "\tcase 0x4E: // '+' (cp037)\n"
+        "\t\treturn v, nil\n"
+        "\tcase 0x60: // '-' (cp037)\n"
+        "\t\tv.Neg(v)\n"
+        "\t\treturn v, nil\n"
+        "\tdefault:\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: separate sign byte %#02x is not \'+\' or '
+        '\'-\'", sign)\n'
+        "\t}\n"
+    )
+
+
+def _packed_body_big(method_name: str, digits: int) -> str:
+    return (
+        f"\tv, err := decodePackedDecimalBig(raw, {digits})\n"
+        "\tif err != nil {\n"
+        f'\t\treturn nil, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        "\treturn v, nil\n"
     )
 
 

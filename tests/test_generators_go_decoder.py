@@ -212,9 +212,58 @@ def test_leading_separate_sign_decodes() -> None:
     assert "sign, digits := raw[0], raw[1:]" in out
 
 
-def test_big_int_resolved_type_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="isn't supported in this slice"):
-        _generate("01 REC.\n  05 A PIC S9(19).")
+def test_unsigned_big_int_field_decodes_via_the_shared_display_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(20).")
+    assert 'import (\n\t"fmt"\n\t"math/big"\n)' in out
+    assert "func (r *Rec) A() (*big.Int, error) {" in out
+    assert "v, err := decodeDisplayDigitsBig(raw)" in out
+    assert "func decodeDisplayDigitsBig(digits []byte) (*big.Int, error) {" in out
+    assert "decodePackedDecimalBig" not in out
+
+
+def test_trailing_overpunch_big_int_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19).")
+    assert "func (r *Rec) A() (*big.Int, error) {" in out
+    assert "v, err := decodeDisplayDigitsBig(lead)" in out
+    assert "v.Mul(v, big.NewInt(10))" in out
+    assert "v.Neg(v)" in out
+
+
+def test_leading_overpunch_big_int_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS LEADING.")
+    assert "tail, err := decodeDisplayDigitsBig(rest)" in out
+    assert "scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(len(rest))), nil)" in out
+
+
+def test_trailing_separate_sign_big_int_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS SEPARATE.")
+    assert "digits, sign := raw[:len(raw)-1], raw[len(raw)-1]" in out
+    assert "v, err := decodeDisplayDigitsBig(digits)" in out
+    assert "case 0x60: // '-' (cp037)\n\t\tv.Neg(v)" in out
+
+
+def test_leading_separate_sign_big_int_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS LEADING SEPARATE.")
+    assert "sign, digits := raw[0], raw[1:]" in out
+
+
+def test_packed_big_int_field_decodes_via_the_shared_packed_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) COMP-3.")
+    assert "func (r *Rec) A() (*big.Int, error) {" in out
+    assert "v, err := decodePackedDecimalBig(raw, 19)" in out
+    assert "func decodePackedDecimalBig(\n\traw []byte, digits int,\n) (*big.Int, error) {" in out
+    assert "decodeDisplayDigitsBig" not in out
+
+
+def test_big_int_binary_field_is_unsupported() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A PIC S9(3) COMP."), source_file="<test>")
+    report = recommend_mappings(dsl, "go")
+    overrides = apply_override(
+        Overrides(), "REC.A", "big.Int", "forced", valid_choices=["big.Int"], force=True
+    )
+    resolved = resolve_mapping(report, overrides)
+    with pytest.raises(UnsupportedDecodeError, match="only supported for DISPLAY/COMP-3"):
+        generate_go_decoder(dsl, resolved)
 
 
 def test_forced_string_override_is_unsupported() -> None:
