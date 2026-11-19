@@ -90,9 +90,50 @@ def test_alphanumeric_field_is_unsupported() -> None:
         _generate("01 REC.\n  05 A PIC X(3).")
 
 
-def test_non_display_usage_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="only DISPLAY"):
-        _generate("01 REC.\n  05 A PIC 9(5) COMP.")
+def test_comp1_field_is_unsupported() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A COMP-1."), source_file="<test>")
+    report = recommend_mappings(dsl, "go")
+    overrides = apply_override(
+        Overrides(), "REC.A", "float32", "forced", valid_choices=[], force=True
+    )
+    resolved = resolve_mapping(report, overrides)
+    with pytest.raises(UnsupportedDecodeError, match="group/nested"):
+        generate_go_decoder(dsl, resolved)
+
+
+def test_packed_decimal_field_decodes_via_the_shared_helper() -> None:
+    out = _generate("01 REC.\n  05 AMT PIC S9(9) COMP-3.")
+    assert "func (r *Rec) Amt() (int32, error) {" in out
+    assert "decodePackedDecimal(raw, 9)" in out
+    assert "func decodePackedDecimal(raw []byte, digits int) (int64, error) {" in out
+
+
+def test_packed_decimal_helper_is_only_emitted_once() -> None:
+    out = _generate(
+        """
+        01  REC.
+            05  A PIC S9(3) COMP-3.
+            05  B PIC S9(4) COMP-3.
+        """
+    )
+    assert out.count("func decodePackedDecimal(") == 1
+
+
+def test_binary_unsigned_field_uses_encoding_binary() -> None:
+    out = _generate("01 REC.\n  05 ID PIC 9(5) COMP.")
+    assert 'import (\n\t"encoding/binary"\n\t"fmt"\n)' in out
+    assert "func (r *Rec) Id() (int32, error) {" in out
+    assert "binary.BigEndian.Uint32(raw)" in out
+
+
+def test_binary_signed_field_sign_extends_via_cast() -> None:
+    out = _generate("01 REC.\n  05 AMT PIC S9(9) COMP.")
+    assert "int32(binary.BigEndian.Uint32(raw))" in out
+
+
+def test_no_binary_import_when_no_binary_field_present() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(3).")
+    assert "encoding/binary" not in out
 
 
 def test_sign_separate_field_is_unsupported() -> None:

@@ -61,6 +61,51 @@ func main() {
 }
 """
 
+# No existing fixture exercises DISPLAY+COMP-3+binary together within
+# the decoder's current slice (mixed_usage.cpy also has COMP-1/COMP-2,
+# which the decoder doesn't support yet) - a small synthetic copybook,
+# not tied to any fixture file, covering the three usages this slice
+# does support in one record. Bytes and expected values hand-computed
+# and cross-checked against decode_record() directly before writing
+# them here (never guessed).
+_PACKED_BINARY_SOURCE = """01 REC.
+    05 UNSIGNED-DISPLAY PIC 9(6).
+    05 SIGNED-DISPLAY PIC S9(3).
+    05 PACKED PIC S9(9) COMP-3.
+    05 BINARY PIC S9(9) COMP.
+"""
+
+_PACKED_BINARY_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, // UNSIGNED-DISPLAY "123456"
+		0xF1, 0xF2, 0xD3, // SIGNED-DISPLAY -123
+		0x12, 0x34, 0x56, 0x78, 0x9D, // PACKED -123456789 (COMP-3)
+		0xC5, 0x21, 0x97, 0x4F, // BINARY -987654321 (big-endian two's complement)
+	}
+	r, err := NewRec(data)
+	if err != nil {
+		panic(err)
+	}
+	if v, err := r.UnsignedDisplay(); err != nil || v != 123456 {
+		panic(fmt.Sprintf("UnsignedDisplay: got (%v, %v), want (123456, nil)", v, err))
+	}
+	if v, err := r.SignedDisplay(); err != nil || v != -123 {
+		panic(fmt.Sprintf("SignedDisplay: got (%v, %v), want (-123, nil)", v, err))
+	}
+	if v, err := r.Packed(); err != nil || v != -123456789 {
+		panic(fmt.Sprintf("Packed: got (%v, %v), want (-123456789, nil)", v, err))
+	}
+	if v, err := r.Binary(); err != nil || v != -987654321 {
+		panic(fmt.Sprintf("Binary: got (%v, %v), want (-987654321, nil)", v, err))
+	}
+	fmt.Println("COMP-3/binary Go decoder round-trip: OK")
+}
+"""
+
 
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
@@ -115,6 +160,27 @@ def _run_docker(image: str, work_dir: pathlib.Path, command: str) -> tuple[bool,
     return result.returncode == 0, result.stdout + result.stderr
 
 
+def _check_go_decoder_roundtrip(
+    out_dir: pathlib.Path, label: str, source: str, go_main: str
+) -> bool:
+    dsl = build_dsl(parse_copybook(source), source_file=f"{label}.cpy")
+    resolved = resolve_mapping(recommend_mappings(dsl, "go"), Overrides())
+    decoder_src = generate_go_decoder(dsl, resolved).replace("package generated", "package main", 1)
+
+    work_dir = out_dir / f"go_decoder_{label}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "gen_decoder.go").write_text(decoder_src)
+    (work_dir / "main.go").write_text(go_main)
+
+    passed, output = _run_docker(
+        "golang:1.23", work_dir, "go mod init tmp >/dev/null 2>&1 && go run ."
+    )
+    print(f"Go decoder round-trip ({label}):", "OK" if passed else f"FAILED\n{output}")
+    if passed:
+        print(output.strip())
+    return passed
+
+
 def main() -> int:
     if shutil.which("docker") is None:
         print("Docker not found - skipping compile-check.")
@@ -123,10 +189,8 @@ def main() -> int:
     out_dir = ROOT / ".compile_check_tmp"
     go_dir = out_dir / "go"
     java_dir = out_dir / "java"
-    go_decoder_dir = out_dir / "go_decoder"
     go_dir.mkdir(parents=True, exist_ok=True)
     java_dir.mkdir(parents=True, exist_ok=True)
-    go_decoder_dir.mkdir(parents=True, exist_ok=True)
 
     ok = True
     for fixture in sorted(FIXTURES_DIR.glob("*.cpy")):
@@ -164,27 +228,21 @@ def main() -> int:
     print("Java:", "OK" if java_passed else f"FAILED\n{java_output}")
     ok = ok and java_passed
 
-    # Go flyweight decoder (ADR 0009, Phase 10): flat_display.cpy is the
-    # only fixture inside this slice's current scope (flat, DISPLAY-only
-    # records) - a real round-trip check, not just compile: the running
-    # binary must decode to the exact values Python's own decoder gives.
-    flat_source = (FIXTURES_DIR / "flat_display.cpy").read_text()
-    flat_dsl = build_dsl(parse_copybook(flat_source), source_file="flat_display.cpy")
-    flat_resolved = resolve_mapping(recommend_mappings(flat_dsl, "go"), Overrides())
-    decoder_src = generate_go_decoder(flat_dsl, flat_resolved).replace(
-        "package generated", "package main", 1
+    # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
+    # not just compiles - the running binary must decode to the exact
+    # values Python's own decode_record() already verified. Two cases,
+    # each covering what this slice actually supports: flat_display.cpy
+    # (DISPLAY only) and a synthetic DISPLAY+COMP-3+binary record (no
+    # existing fixture combines those three within this slice's scope,
+    # since mixed_usage.cpy also has COMP-1/COMP-2, which isn't
+    # supported yet).
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
+        _FLAT_DISPLAY_GO_MAIN,
     )
-    (go_decoder_dir / "gen_decoder.go").write_text(decoder_src)
-    (go_decoder_dir / "main.go").write_text(_FLAT_DISPLAY_GO_MAIN)
-    decoder_passed, decoder_output = _run_docker(
-        "golang:1.23",
-        go_decoder_dir,
-        "go mod init tmp >/dev/null 2>&1 && go run .",
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "packed_binary", _PACKED_BINARY_SOURCE, _PACKED_BINARY_GO_MAIN
     )
-    print("Go decoder round-trip:", "OK" if decoder_passed else f"FAILED\n{decoder_output}")
-    if decoder_passed:
-        print(decoder_output.strip())
-    ok = ok and decoder_passed
 
     shutil.rmtree(out_dir)
     return 0 if ok else 1

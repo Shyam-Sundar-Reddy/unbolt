@@ -183,6 +183,24 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already used, asserting both independently-written decoders agree
   on every value (ADR 0009's round-trip acceptance criterion). 19 new
   tests.
+- Phase 10, second slice: lifted the Go flyweight decoder's
+  `COMP-3`/`PACKED-DECIMAL` and `COMP`/`COMP-4`/`COMP-5`/`BINARY`
+  restrictions. Packed decimal decodes via one shared
+  `decodePackedDecimal()` helper (emitted once per file, only when
+  needed) replicating `decode_packed()`'s nibble/pad/sign logic
+  exactly; binary fields read via `encoding/binary`'s
+  `BigEndian.Uint16/32/64`, sign-extended with a same-width signed Go
+  cast. Caught and fixed before trusting it: an early version emitted
+  a redundant double-cast (`int32(int32(...))`) when the resolved type
+  already matched the natural sign-extension type — found by actually
+  reading the generated Go, not by assuming the string-building logic
+  was right. `tools/compile_check` gained a second real round-trip —
+  a synthetic `DISPLAY`+`COMP-3`+binary record, since no existing
+  fixture combines all three within this slice's scope — with its
+  expected bytes hand-computed and cross-checked against
+  `decode_record()` directly first; this caught one wrong guessed byte
+  sequence for the binary field's expected encoding before it ever
+  reached Docker. 5 new tests.
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -7,16 +7,22 @@ output never had a byte buffer to begin with.
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
 generation instead of Python-side decode: flat records only (no
-nested groups, OCCURS, or REDEFINES), DISPLAY fields only (unsigned,
-and signed via trailing overpunch - no SIGN IS SEPARATE/LEADING, no
-COMP-3/binary/alphanumeric), and only integer-ladder Go types up to
-int64/uint64 (no big.Int/string/float - decision 0004's default
-candidate resolution never picks those for a plain integer field
-anyway, but a forced override could). Later Phase 10 slices lift
-these restrictions one at a time.
+nested groups, OCCURS, or REDEFINES); DISPLAY (unsigned and signed via
+trailing overpunch - no SIGN IS SEPARATE/LEADING yet),
+COMP-3/PACKED-DECIMAL, and COMP/COMP-4/COMP-5/BINARY fields; and only
+integer-ladder Go types up to int64/uint64 (no big.Int/string/float -
+decision 0004's default candidate resolution never picks those for a
+plain integer field anyway, but a forced override could). Later Phase
+10 slices lift the remaining restrictions one at a time.
 """
 
-from unbolt.datatypes.sizing import is_alpha_pic, is_edited_pic, is_national_pic
+from unbolt.datatypes.sizing import (
+    is_alpha_pic,
+    is_binary_usage,
+    is_edited_pic,
+    is_national_pic,
+    is_packed_usage,
+)
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.exceptions import UnsupportedDecodeError
 from unbolt.generators.naming import go_field_name
@@ -24,6 +30,40 @@ from unbolt.generators.naming import go_field_name
 _INTEGER_GO_TYPES = frozenset(
     {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"}
 )
+_BINARY_UINT_READER = {2: "Uint16", 4: "Uint32", 8: "Uint64"}
+_BINARY_SIGNED_CAST = {2: "int16", 4: "int32", 8: "int64"}
+
+_PACKED_DECIMAL_HELPER = """func decodePackedDecimal(raw []byte, digits int) (int64, error) {
+\ttotalNibbles := len(raw) * 2
+\tpad := totalNibbles - 1 - digits
+\tvar v int64
+\tnibbleIndex := 0
+\tfor _, b := range raw {
+\t\tfor _, n := range [2]byte{b >> 4, b & 0x0F} {
+\t\t\tswitch {
+\t\t\tcase nibbleIndex == totalNibbles-1:
+\t\t\t\tswitch n {
+\t\t\t\tcase 0xC, 0xF:
+\t\t\t\tcase 0xD:
+\t\t\t\t\tv = -v
+\t\t\t\tdefault:
+\t\t\t\t\treturn 0, fmt.Errorf("packed decimal: unrecognized sign nibble %#x", n)
+\t\t\t\t}
+\t\t\tcase nibbleIndex < pad:
+\t\t\t\tif n != 0 {
+\t\t\t\t\treturn 0, fmt.Errorf("packed decimal: non-zero leading pad nibble %#x", n)
+\t\t\t\t}
+\t\t\tdefault:
+\t\t\t\tif n > 9 {
+\t\t\t\t\treturn 0, fmt.Errorf("packed decimal: non-digit nibble %#x", n)
+\t\t\t\t}
+\t\t\t\tv = v*10 + int64(n)
+\t\t\t}
+\t\t\tnibbleIndex++
+\t\t}
+\t}
+\treturn v, nil
+}"""
 
 
 def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
@@ -32,7 +72,8 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
 
     Args: dsl (Dsl): must have exactly one root, itself a group (not a
             scalar 77-level item) with only flat, non-OCCURS,
-            non-REDEFINES, DISPLAY-usage children - this slice's scope.
+            non-REDEFINES children using a supported usage - this
+            slice's scope (see module docstring).
         resolved (dict[str, str]): field_path -> Go type name, from
             generators.resolve_mapping() (the same input generate_go()
             takes) - the flyweight decoder returns the identical Go
@@ -60,16 +101,20 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
     if root.pic is not None or not root.children:
         raise UnsupportedDecodeError("go decoder: the root must be a group in this slice")
 
+    needs: set[str] = set()
     struct_name = go_field_name(root.name)
     accessors = [
-        _render_accessor(child, f"{root.name}.{child.name}", resolved, struct_name)
+        _render_accessor(child, f"{root.name}.{child.name}", resolved, struct_name, needs)
         for child in root.children
     ]
 
+    imports = ['"fmt"']
+    if "binary" in needs:
+        imports.insert(0, '"encoding/binary"')
     header = [
         "package generated",
         "",
-        'import "fmt"',
+        "import (\n" + "\n".join(f"\t{imp}" for imp in imports) + "\n)",
         "",
         f"type {struct_name} struct {{",
         "\tbuf []byte",
@@ -83,11 +128,18 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
         f"\treturn &{struct_name}{{buf: buf}}, nil",
         "}",
     ]
-    return "\n".join(header) + "\n\n" + "\n\n".join(accessors) + "\n"
+    blocks = [*accessors]
+    if "packed" in needs:
+        blocks.append(_PACKED_DECIMAL_HELPER)
+    return "\n".join(header) + "\n\n" + "\n\n".join(blocks) + "\n"
 
 
 def _render_accessor(
-    node: FieldNode, field_path: str, resolved: dict[str, str], struct_name: str
+    node: FieldNode,
+    field_path: str,
+    resolved: dict[str, str],
+    struct_name: str,
+    needs: set[str],
 ) -> str:
     if node.occurs is not None:
         raise UnsupportedDecodeError(f"go decoder: OCCURS field {node.name!r} isn't supported yet")
@@ -102,11 +154,6 @@ def _render_accessor(
     if is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic):
         raise UnsupportedDecodeError(
             f"go decoder: alphanumeric/edited/national field {node.name!r} isn't supported yet"
-        )
-    if node.usage.upper() != "DISPLAY":
-        raise UnsupportedDecodeError(
-            f"go decoder: only DISPLAY fields are supported in this slice, "
-            f"got {node.usage!r} for {node.name!r}"
         )
     if node.sign_separate:
         raise UnsupportedDecodeError(
@@ -130,11 +177,25 @@ def _render_accessor(
 
     method_name = go_field_name(node.name)
     start, end = node.offset, node.offset + node.byte_size
-    body = (
-        _signed_display_body(method_name, go_type)
-        if node.signed
-        else _unsigned_display_body(method_name, go_type)
-    )
+
+    if is_packed_usage(node.usage):
+        needs.add("packed")
+        body = _packed_body(method_name, go_type, node.digits)
+    elif is_binary_usage(node.usage):
+        needs.add("binary")
+        body = _binary_body(node.byte_size, node.signed, go_type)
+    elif node.usage.upper() == "DISPLAY":
+        body = (
+            _signed_display_body(method_name, go_type)
+            if node.signed
+            else _unsigned_display_body(method_name, go_type)
+        )
+    else:
+        raise UnsupportedDecodeError(
+            f"go decoder: only DISPLAY/COMP-3/binary fields are supported in this "
+            f"slice, got {node.usage!r} for {node.name!r}"
+        )
+
     return (
         f"func (r *{struct_name}) {method_name}() ({go_type}, error) {{\n"
         f"\traw := r.buf[{start}:{end}]\n" + body + "}"
@@ -183,3 +244,29 @@ def _signed_display_body(method_name: str, go_type: str) -> str:
         "\t}\n"
         f"\treturn {go_type}(v), nil\n"
     )
+
+
+def _packed_body(method_name: str, go_type: str, digits: int) -> str:
+    return (
+        f"\tv, err := decodePackedDecimal(raw, {digits})\n"
+        "\tif err != nil {\n"
+        f'\t\treturn 0, fmt.Errorf("{method_name}: %w", err)\n'
+        "\t}\n"
+        f"\treturn {go_type}(v), nil\n"
+    )
+
+
+def _binary_body(byte_size: int, signed: bool, go_type: str) -> str:
+    reader = _BINARY_UINT_READER[byte_size]
+    unsigned_expr = f"binary.BigEndian.{reader}(raw)"
+    if not signed:
+        return f"\treturn {go_type}({unsigned_expr}), nil\n"
+    signed_cast = _BINARY_SIGNED_CAST[byte_size]
+    # Sign-extend via a same-width signed cast first (reinterprets the
+    # two's-complement bit pattern, matching Python's int.from_bytes(
+    # signed=True)), then narrow to the resolved type - skip the outer
+    # cast entirely when it would just repeat the same type.
+    signed_expr = f"{signed_cast}({unsigned_expr})"
+    if go_type == signed_cast:
+        return f"\treturn {signed_expr}, nil\n"
+    return f"\treturn {go_type}({signed_expr}), nil\n"
