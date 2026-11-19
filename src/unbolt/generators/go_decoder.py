@@ -4,16 +4,24 @@ reflection. A different artifact from generate_go()'s plain structs,
 not a replacement for it - decision 0006 stays untouched, and this
 output never had a byte buffer to begin with.
 
+Nested groups get their own struct type, mirroring generate_go()'s own
+nested-struct shape for consistency. Since FieldNode.offset is
+absolute from the record root (ADR 0008), not relative to its
+immediate parent, a nested group's accessor methods read from the
+exact same buffer at their own absolute offsets - no separate base-
+offset tracking needed; the group's accessor on its parent just hands
+over the same buf reference (a slice header copy, not an allocation).
+
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
-generation instead of Python-side decode: flat records only (no
-nested groups, OCCURS, or REDEFINES); DISPLAY (unsigned and signed via
-trailing overpunch - no SIGN IS SEPARATE/LEADING yet),
-COMP-3/PACKED-DECIMAL, and COMP/COMP-4/COMP-5/BINARY fields; and only
-integer-ladder Go types up to int64/uint64 (no big.Int/string/float -
-decision 0004's default candidate resolution never picks those for a
-plain integer field anyway, but a forced override could). Later Phase
-10 slices lift the remaining restrictions one at a time.
+generation instead of Python-side decode: OCCURS and REDEFINES fields;
+DISPLAY (unsigned and signed via trailing overpunch - no SIGN IS
+SEPARATE/LEADING yet), COMP-3/PACKED-DECIMAL, and COMP/COMP-4/COMP-5/
+BINARY leaf fields; and only integer-ladder Go types up to
+int64/uint64 (no big.Int/string/float - decision 0004's default
+candidate resolution never picks those for a plain integer field
+anyway, but a forced override could). Later Phase 10 slices lift the
+remaining restrictions one at a time.
 """
 
 from unbolt.datatypes.sizing import (
@@ -67,13 +75,14 @@ _PACKED_DECIMAL_HELPER = """func decodePackedDecimal(raw []byte, digits int) (in
 
 
 def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
-    """Emit a flyweight Go decoder: one struct wrapping a []byte, one
-    accessor method per field reading straight from the buffer.
+    """Emit a flyweight Go decoder: one struct per group (root and
+    nested), one accessor method per field reading straight from the
+    buffer.
 
     Args: dsl (Dsl): must have exactly one root, itself a group (not a
-            scalar 77-level item) with only flat, non-OCCURS,
-            non-REDEFINES children using a supported usage - this
-            slice's scope (see module docstring).
+            scalar 77-level item); every field under it must use a
+            supported usage and not be OCCURS/REDEFINES - this slice's
+            scope (see module docstring).
         resolved (dict[str, str]): field_path -> Go type name, from
             generators.resolve_mapping() (the same input generate_go()
             takes) - the flyweight decoder returns the identical Go
@@ -102,11 +111,10 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
         raise UnsupportedDecodeError("go decoder: the root must be a group in this slice")
 
     needs: set[str] = set()
-    struct_name = go_field_name(root.name)
-    accessors = [
-        _render_accessor(child, f"{root.name}.{child.name}", resolved, struct_name, needs)
-        for child in root.children
-    ]
+    struct_decls: list[str] = []
+    accessor_blocks: list[str] = []
+    struct_name = _render_group(root, root.name, resolved, needs, struct_decls, accessor_blocks)
+    accessor_blocks.insert(0, _root_constructor(struct_name, root.byte_size))
 
     imports = ['"fmt"']
     if "binary" in needs:
@@ -115,41 +123,92 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
         "package generated",
         "",
         "import (\n" + "\n".join(f"\t{imp}" for imp in imports) + "\n)",
-        "",
-        f"type {struct_name} struct {{",
-        "\tbuf []byte",
-        "}",
-        "",
-        f"func New{struct_name}(buf []byte) (*{struct_name}, error) {{",
-        f"\tif len(buf) != {root.byte_size} {{",
-        f'\t\treturn nil, fmt.Errorf("{struct_name}: expected {root.byte_size} bytes, got %d", '
-        "len(buf))",
-        "\t}",
-        f"\treturn &{struct_name}{{buf: buf}}, nil",
-        "}",
     ]
-    blocks = [*accessors]
+    blocks = struct_decls + accessor_blocks
     if "packed" in needs:
         blocks.append(_PACKED_DECIMAL_HELPER)
     return "\n".join(header) + "\n\n" + "\n\n".join(blocks) + "\n"
 
 
-def _render_accessor(
+def _root_constructor(struct_name: str, byte_size: int) -> str:
+    return (
+        f"func New{struct_name}(buf []byte) (*{struct_name}, error) {{\n"
+        f"\tif len(buf) != {byte_size} {{\n"
+        f'\t\treturn nil, fmt.Errorf("{struct_name}: expected {byte_size} bytes, got %d", '
+        "len(buf))\n"
+        "\t}\n"
+        f"\treturn &{struct_name}{{buf: buf}}, nil\n"
+        "}"
+    )
+
+
+def _render_group(
     node: FieldNode,
     field_path: str,
     resolved: dict[str, str],
-    struct_name: str,
     needs: set[str],
+    struct_decls: list[str],
+    accessor_blocks: list[str],
 ) -> str:
+    """Emits this group's struct type, then recurses into its children
+    (each appending its own accessor - and, for a nested group, its own
+    struct type first). Returns the Go struct type name, so the caller
+    (the parent group, or generate_go_decoder for the root) can use it.
+    """
+    struct_name = go_field_name(node.name)
+    struct_decls.append(f"type {struct_name} struct {{\n\tbuf []byte\n}}")
+    for child in node.children:
+        _render_child(
+            child, f"{field_path}.{child.name}", resolved, struct_name, needs,
+            struct_decls, accessor_blocks,
+        )
+    return struct_name
+
+
+def _render_child(
+    node: FieldNode,
+    field_path: str,
+    resolved: dict[str, str],
+    parent_struct_name: str,
+    needs: set[str],
+    struct_decls: list[str],
+    accessor_blocks: list[str],
+) -> None:
     if node.occurs is not None:
         raise UnsupportedDecodeError(f"go decoder: OCCURS field {node.name!r} isn't supported yet")
     if node.redefines is not None:
         raise UnsupportedDecodeError(
             f"go decoder: REDEFINES field {node.name!r} isn't supported yet"
         )
-    if node.pic is None or node.children:
+
+    method_name = go_field_name(node.name)
+
+    if node.pic is None and node.children:
+        child_struct_name = _render_group(
+            node, field_path, resolved, needs, struct_decls, accessor_blocks
+        )
+        accessor_blocks.append(
+            f"func (r *{parent_struct_name}) {method_name}() {child_struct_name} {{\n"
+            f"\treturn {child_struct_name}{{buf: r.buf}}\n"
+            "}"
+        )
+        return
+
+    accessor_blocks.append(
+        _render_leaf_accessor(node, field_path, resolved, parent_struct_name, needs)
+    )
+
+
+def _render_leaf_accessor(
+    node: FieldNode,
+    field_path: str,
+    resolved: dict[str, str],
+    struct_name: str,
+    needs: set[str],
+) -> str:
+    if node.pic is None:
         raise UnsupportedDecodeError(
-            f"go decoder: group/nested field {node.name!r} isn't supported yet"
+            f"go decoder: COMP-1/COMP-2 field {node.name!r} isn't supported yet"
         )
     if is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic):
         raise UnsupportedDecodeError(

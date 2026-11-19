@@ -80,9 +80,64 @@ def test_redefines_field_is_unsupported() -> None:
         _generate("01 REC.\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).")
 
 
-def test_nested_group_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="group/nested"):
-        _generate("01 REC.\n  05 GRP.\n    10 A PIC 9(1).")
+def test_nested_group_gets_its_own_struct_and_accessor() -> None:
+    out = _generate(
+        """
+        01  REC.
+            05  GRP.
+                10  A PIC 9(1).
+        """
+    )
+    assert "type Grp struct {" in out
+    assert "func (r *Rec) Grp() Grp {" in out
+    assert "return Grp{buf: r.buf}" in out
+    assert "func (r *Grp) A() (int8, error) {" in out
+
+
+def test_nested_group_field_offsets_are_absolute_from_the_root() -> None:
+    out = _generate(
+        """
+        01  REC.
+            05  A PIC 9(2).
+            05  GRP.
+                10  B PIC 9(3).
+        """
+    )
+    assert "r.buf[2:5]" in out  # GRP.B starts at absolute offset 2, not 0
+
+
+def test_doubly_nested_groups_each_get_their_own_struct() -> None:
+    out = _generate(
+        """
+        01  REC.
+            05  OUTER.
+                10  INNER.
+                    15  A PIC 9(1).
+        """
+    )
+    assert "type Outer struct {" in out
+    assert "type Inner struct {" in out
+    assert "func (r *Rec) Outer() Outer {" in out
+    assert "func (r *Outer) Inner() Inner {" in out
+    assert "func (r *Inner) A() (int8, error) {" in out
+
+
+def test_nested_occurs_group_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
+        _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")
+
+
+def test_nested_redefines_group_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
+        _generate(
+            """
+            01  REC.
+                05  A.
+                    10  X PIC 9(1).
+                05  B REDEFINES A.
+                    10  Y PIC 9(1).
+            """
+        )
 
 
 def test_alphanumeric_field_is_unsupported() -> None:
@@ -97,7 +152,7 @@ def test_comp1_field_is_unsupported() -> None:
         Overrides(), "REC.A", "float32", "forced", valid_choices=[], force=True
     )
     resolved = resolve_mapping(report, overrides)
-    with pytest.raises(UnsupportedDecodeError, match="group/nested"):
+    with pytest.raises(UnsupportedDecodeError, match="COMP-1/COMP-2"):
         generate_go_decoder(dsl, resolved)
 
 

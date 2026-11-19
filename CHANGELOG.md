@@ -201,6 +201,19 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `decode_record()` directly first; this caught one wrong guessed byte
   sequence for the binary field's expected encoding before it ever
   reached Docker. 5 new tests.
+- Phase 10, third slice: nested-group support for the Go flyweight
+  decoder. A group field now gets its own Go struct type, mirroring
+  `generate_go()`'s nested-struct shape; the parent's accessor for it
+  just hands over the same `buf` reference to a new struct value — no
+  allocation, no offset math needed at that level, since
+  `FieldNode.offset` is already absolute from the record root (ADR
+  0008), not relative to the immediate parent. `OCCURS`/`REDEFINES`
+  are rejected the same way whether they land on a group or a leaf.
+  `tools/compile_check` gained a third real round-trip: the real
+  `nested_groups.cpy` fixture (two levels deep), its expected bytes
+  hand-computed and cross-checked against `decode_record()` directly
+  first. 4 new tests (net, after retiring the now-obsolete "nested
+  group isn't supported" test).
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -106,6 +106,47 @@ func main() {
 }
 """
 
+# nested_groups.cpy - a real fixture, now fully supported by this
+# slice's nested-group support. Bytes and expected values hand-computed
+# and cross-checked against decode_record() directly before writing
+# them here (never guessed).
+_NESTED_GROUPS_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF4, 0xF2, // ORDER-ID 42
+		0xF2, 0xF0, 0xF2, 0xF4, // ORDER-YEAR 2024
+		0xF1, 0xF1, // ORDER-MONTH 11
+		0xF0, 0xF5, // ORDER-DAY 5
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xD9, // ORDER-TOTAL -123456789 unscaled
+	}
+	r, err := NewOrderRecord(data)
+	if err != nil {
+		panic(err)
+	}
+	header := r.OrderHeader()
+	if v, err := header.OrderId(); err != nil || v != 42 {
+		panic(fmt.Sprintf("OrderId: got (%v, %v), want (42, nil)", v, err))
+	}
+	date := header.OrderDate()
+	if v, err := date.OrderYear(); err != nil || v != 2024 {
+		panic(fmt.Sprintf("OrderYear: got (%v, %v), want (2024, nil)", v, err))
+	}
+	if v, err := date.OrderMonth(); err != nil || v != 11 {
+		panic(fmt.Sprintf("OrderMonth: got (%v, %v), want (11, nil)", v, err))
+	}
+	if v, err := date.OrderDay(); err != nil || v != 5 {
+		panic(fmt.Sprintf("OrderDay: got (%v, %v), want (5, nil)", v, err))
+	}
+	if v, err := r.OrderTotal(); err != nil || v != -123456789 {
+		panic(fmt.Sprintf("OrderTotal: got (%v, %v), want (-123456789, nil)", v, err))
+	}
+	fmt.Println("nested_groups Go decoder round-trip: OK")
+}
+"""
+
 
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
@@ -230,18 +271,21 @@ def main() -> int:
 
     # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
     # not just compiles - the running binary must decode to the exact
-    # values Python's own decode_record() already verified. Two cases,
-    # each covering what this slice actually supports: flat_display.cpy
-    # (DISPLAY only) and a synthetic DISPLAY+COMP-3+binary record (no
-    # existing fixture combines those three within this slice's scope,
-    # since mixed_usage.cpy also has COMP-1/COMP-2, which isn't
-    # supported yet).
+    # values Python's own decode_record() already verified. Three cases:
+    # flat_display.cpy (DISPLAY only), a synthetic DISPLAY+COMP-3+binary
+    # record (no existing fixture combines those three within this
+    # slice's scope, since mixed_usage.cpy also has COMP-1/COMP-2, which
+    # isn't supported yet), and nested_groups.cpy (nested group structs).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
     )
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "packed_binary", _PACKED_BINARY_SOURCE, _PACKED_BINARY_GO_MAIN
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "nested_groups", (FIXTURES_DIR / "nested_groups.cpy").read_text(),
+        _NESTED_GROUPS_GO_MAIN,
     )
 
     shutil.rmtree(out_dir)
