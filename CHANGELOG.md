@@ -214,6 +214,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hand-computed and cross-checked against `decode_record()` directly
   first. 4 new tests (net, after retiring the now-obsolete "nested
   group isn't supported" test).
+- Phase 10, fourth slice: `SIGN IS SEPARATE`/`SIGN IS LEADING` support
+  for the Go flyweight decoder, mirroring Phase 8's own DISPLAY
+  sign-placement step. Leading overpunch and both separate-sign forms
+  each get their own Go body generator; a separate sign byte is
+  checked as a literal value directly (`0x4E`/`0x60` in `cp037` for
+  `+`/`-`) rather than needing a full charset table. `tools/
+  compile_check` gained a fourth real round-trip: a synthetic record
+  covering all three non-default sign placements, its expected bytes
+  hand-computed and cross-checked against `decode_record()` directly
+  first. 1 new test (net, after retiring two now-obsolete
+  "unsupported" tests and adding three real ones).
 
 ## [0.1.1] - Released 2026-10-25
 

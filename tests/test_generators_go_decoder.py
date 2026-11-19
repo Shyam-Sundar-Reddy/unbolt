@@ -191,14 +191,25 @@ def test_no_binary_import_when_no_binary_field_present() -> None:
     assert "encoding/binary" not in out
 
 
-def test_sign_separate_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="SIGN IS SEPARATE"):
-        _generate("01 REC.\n  05 A PIC S9(3) SIGN IS SEPARATE.")
+def test_leading_overpunch_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING.")
+    assert "func (r *Rec) A() (int16, error) {" in out
+    assert "first := raw[0]" in out
+    assert "rest := raw[1:]" in out
 
 
-def test_sign_leading_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="SIGN IS LEADING"):
-        _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING.")
+def test_trailing_separate_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS SEPARATE.")
+    assert "func (r *Rec) A() (int16, error) {" in out
+    assert "digits, sign := raw[:len(raw)-1], raw[len(raw)-1]" in out
+    assert "case 0x4E:" in out
+    assert "case 0x60:" in out
+
+
+def test_leading_separate_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING SEPARATE.")
+    assert "func (r *Rec) A() (int16, error) {" in out
+    assert "sign, digits := raw[0], raw[1:]" in out
 
 
 def test_big_int_resolved_type_is_unsupported() -> None:

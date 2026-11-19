@@ -101,8 +101,11 @@ dropped — never silently misconverted:
   `DISPLAY`/`COMP-3`/binary records, flat or nested, so far.**
   `generate_go_decoder()` emits a struct per group (root and nested)
   wrapping a `[]byte`, with one accessor method per field reading
-  directly from the buffer with zero allocation — `DISPLAY` (unsigned
-  and signed trailing overpunch) via per-field byte/nibble arithmetic;
+  directly from the buffer with zero allocation — `DISPLAY` (unsigned,
+  and signed via trailing/leading overpunch or trailing/leading `SIGN
+  IS SEPARATE` — a separate sign byte is checked as a literal value
+  directly, `0x4E`/`0x60` in `cp037` for `+`/`-`, no charset table
+  needed for just two values) via per-field byte/nibble arithmetic;
   `COMP-3`/`PACKED-DECIMAL` via one shared `decodePackedDecimal()`
   helper (emitted once per file, only when needed); `COMP`/`COMP-4`/
   `COMP-5`/`BINARY` via `encoding/binary`'s `BigEndian.Uint16/32/64`,
@@ -115,19 +118,18 @@ dropped — never silently misconverted:
   the immediate parent. It raises `UnsupportedDecodeError` (never
   guesses) for: more than one DSL root; a scalar (non-group) root;
   `OCCURS`; `REDEFINES` (on a group or a leaf); alphanumeric/edited/
-  national fields; `COMP-1`/`COMP-2` (float); `SIGN IS SEPARATE`/`SIGN
-  IS LEADING`; and any resolved Go type outside the plain
-  `int8`..`int64`/`uint8`..`uint64` ladder (`big.Int`, `string`, a
-  forced `float32`/`float64` override). `emit="decoder"` only supports
-  `target="go"` — there is no Java flyweight decoder generator yet.
-  Verified with real round-trips, not just compile checks:
-  `tools/compile_check` builds and **runs** three generated decoders
-  (flat `DISPLAY`-only; a synthetic `DISPLAY`+`COMP-3`+binary record —
-  no existing fixture combines all three within this slice's scope;
-  and the real `nested_groups.cpy` fixture, two levels deep) against
-  real bytes in Docker, asserting the decoded values match Python's
-  own `decode_record()` exactly (ADR 0009's stated acceptance
-  criterion).
+  national fields; `COMP-1`/`COMP-2` (float); and any resolved Go type
+  outside the plain `int8`..`int64`/`uint8`..`uint64` ladder (`big.Int`,
+  `string`, a forced `float32`/`float64` override). `emit="decoder"`
+  only supports `target="go"` — there is no Java flyweight decoder
+  generator yet. Verified with real round-trips, not just compile
+  checks: `tools/compile_check` builds and **runs** four generated
+  decoders (flat `DISPLAY`-only; a synthetic `DISPLAY`+`COMP-3`+binary
+  record; the real `nested_groups.cpy` fixture, two levels deep; and a
+  synthetic record covering all three non-default sign placements — no
+  existing fixture uses any of these combinations) against real bytes
+  in Docker, asserting the decoded values match Python's own
+  `decode_record()` exactly (ADR 0009's stated acceptance criterion).
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

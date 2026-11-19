@@ -147,6 +147,44 @@ func main() {
 }
 """
 
+# All three sign placements the decoder doesn't default to (trailing
+# overpunch, covered by flat_display.cpy already): leading overpunch,
+# trailing separate, leading separate. No fixture uses SIGN - a small
+# synthetic copybook, bytes hand-computed and cross-checked against
+# decode_record() directly before writing them here.
+_SIGN_PLACEMENTS_SOURCE = """01 REC.
+    05 LEAD-OVP PIC S9(3) SIGN IS LEADING.
+    05 TRAIL-SEP PIC S9(3) SIGN IS SEPARATE.
+    05 LEAD-SEP PIC S9(3) SIGN IS LEADING SEPARATE.
+"""
+
+_SIGN_PLACEMENTS_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xD1, 0xF2, 0xF3, // LEAD-OVP -123 (leading overpunch)
+		0xF4, 0xF5, 0xF6, 0x60, // TRAIL-SEP -456 (trailing separate)
+		0x60, 0xF7, 0xF8, 0xF9, // LEAD-SEP -789 (leading separate)
+	}
+	r, err := NewRec(data)
+	if err != nil {
+		panic(err)
+	}
+	if v, err := r.LeadOvp(); err != nil || v != -123 {
+		panic(fmt.Sprintf("LeadOvp: got (%v, %v), want (-123, nil)", v, err))
+	}
+	if v, err := r.TrailSep(); err != nil || v != -456 {
+		panic(fmt.Sprintf("TrailSep: got (%v, %v), want (-456, nil)", v, err))
+	}
+	if v, err := r.LeadSep(); err != nil || v != -789 {
+		panic(fmt.Sprintf("LeadSep: got (%v, %v), want (-789, nil)", v, err))
+	}
+	fmt.Println("sign placements Go decoder round-trip: OK")
+}
+"""
+
 
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
@@ -271,11 +309,13 @@ def main() -> int:
 
     # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
     # not just compiles - the running binary must decode to the exact
-    # values Python's own decode_record() already verified. Three cases:
+    # values Python's own decode_record() already verified. Four cases:
     # flat_display.cpy (DISPLAY only), a synthetic DISPLAY+COMP-3+binary
     # record (no existing fixture combines those three within this
     # slice's scope, since mixed_usage.cpy also has COMP-1/COMP-2, which
-    # isn't supported yet), and nested_groups.cpy (nested group structs).
+    # isn't supported yet), nested_groups.cpy (nested group structs), and
+    # a synthetic record covering all three non-default sign placements
+    # (no fixture uses SIGN at all).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
@@ -286,6 +326,9 @@ def main() -> int:
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "nested_groups", (FIXTURES_DIR / "nested_groups.cpy").read_text(),
         _NESTED_GROUPS_GO_MAIN,
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "sign_placements", _SIGN_PLACEMENTS_SOURCE, _SIGN_PLACEMENTS_GO_MAIN
     )
 
     shutil.rmtree(out_dir)

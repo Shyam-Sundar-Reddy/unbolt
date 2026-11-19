@@ -12,15 +12,21 @@ exact same buffer at their own absolute offsets - no separate base-
 offset tracking needed; the group's accessor on its parent just hands
 over the same buf reference (a slice header copy, not an allocation).
 
+A SIGN IS SEPARATE sign byte is a plain '+'/'-' character (cp037:
+0x4E/0x60), checked as a literal byte value directly - no charset
+table needed for just two values, the same reasoning that keeps
+alphanumeric field decode (which would need the full table) out of
+this slice.
+
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
 generation instead of Python-side decode: OCCURS and REDEFINES fields;
-DISPLAY (unsigned and signed via trailing overpunch - no SIGN IS
-SEPARATE/LEADING yet), COMP-3/PACKED-DECIMAL, and COMP/COMP-4/COMP-5/
-BINARY leaf fields; and only integer-ladder Go types up to
-int64/uint64 (no big.Int/string/float - decision 0004's default
-candidate resolution never picks those for a plain integer field
-anyway, but a forced override could). Later Phase 10 slices lift the
+DISPLAY (unsigned, and signed via trailing/leading overpunch or
+trailing/leading SIGN IS SEPARATE), COMP-3/PACKED-DECIMAL, and
+COMP/COMP-4/COMP-5/BINARY leaf fields; and only integer-ladder Go
+types up to int64/uint64 (no big.Int/string/float - decision 0004's
+default candidate resolution never picks those for a plain integer
+field anyway, but a forced override could). Later Phase 10 slices lift the
 remaining restrictions one at a time.
 """
 
@@ -214,14 +220,6 @@ def _render_leaf_accessor(
         raise UnsupportedDecodeError(
             f"go decoder: alphanumeric/edited/national field {node.name!r} isn't supported yet"
         )
-    if node.sign_separate:
-        raise UnsupportedDecodeError(
-            f"go decoder: SIGN IS SEPARATE field {node.name!r} isn't supported yet"
-        )
-    if node.sign_leading:
-        raise UnsupportedDecodeError(
-            f"go decoder: SIGN IS LEADING field {node.name!r} isn't supported yet"
-        )
 
     resolved_type = resolved[field_path]
     # "int64 (scaled)" is decision 0002's marker for a scaled decimal
@@ -244,11 +242,14 @@ def _render_leaf_accessor(
         needs.add("binary")
         body = _binary_body(node.byte_size, node.signed, go_type)
     elif node.usage.upper() == "DISPLAY":
-        body = (
-            _signed_display_body(method_name, go_type)
-            if node.signed
-            else _unsigned_display_body(method_name, go_type)
-        )
+        if not node.signed:
+            body = _unsigned_display_body(method_name, go_type)
+        elif node.sign_separate:
+            body = _separate_sign_display_body(method_name, go_type, node.sign_leading)
+        elif node.sign_leading:
+            body = _leading_overpunch_display_body(method_name, go_type)
+        else:
+            body = _signed_display_body(method_name, go_type)
     else:
         raise UnsupportedDecodeError(
             f"go decoder: only DISPLAY/COMP-3/binary fields are supported in this "
@@ -302,6 +303,63 @@ def _signed_display_body(method_name: str, go_type: str) -> str:
         'nibble %#02x", last, zone)\n'
         "\t}\n"
         f"\treturn {go_type}(v), nil\n"
+    )
+
+
+def _leading_overpunch_display_body(method_name: str, go_type: str) -> str:
+    return (
+        "\tfirst := raw[0]\n"
+        "\trest := raw[1:]\n"
+        "\tzone := first & 0xF0\n"
+        "\tdigit := first & 0x0F\n"
+        "\tif digit > 9 {\n"
+        f'\t\treturn 0, fmt.Errorf("{method_name}: first byte %#02x has a non-digit value '
+        'nibble %d", first, digit)\n'
+        "\t}\n"
+        "\tvar v int64 = int64(digit)\n"
+        "\tfor _, b := range rest {\n"
+        "\t\tif b < 0xF0 || b > 0xF9 {\n"
+        f'\t\t\treturn 0, fmt.Errorf("{method_name}: byte %#02x is not a DISPLAY digit", b)\n'
+        "\t\t}\n"
+        "\t\tv = v*10 + int64(b&0x0F)\n"
+        "\t}\n"
+        "\tswitch zone {\n"
+        "\tcase 0xC0, 0xF0:\n"
+        "\t\t// positive\n"
+        "\tcase 0xD0:\n"
+        "\t\tv = -v\n"
+        "\tdefault:\n"
+        f'\t\treturn 0, fmt.Errorf("{method_name}: first byte %#02x has an unrecognized sign '
+        'nibble %#02x", first, zone)\n'
+        "\t}\n"
+        f"\treturn {go_type}(v), nil\n"
+    )
+
+
+def _separate_sign_display_body(method_name: str, go_type: str, sign_leading: bool) -> str:
+    split = (
+        "sign, digits := raw[0], raw[1:]"
+        if sign_leading
+        else "digits, sign := raw[:len(raw)-1], raw[len(raw)-1]"
+    )
+    return (
+        f"\t{split}\n"
+        "\tvar v uint64\n"
+        "\tfor _, b := range digits {\n"
+        "\t\tif b < 0xF0 || b > 0xF9 {\n"
+        f'\t\t\treturn 0, fmt.Errorf("{method_name}: byte %#02x is not a DISPLAY digit", b)\n'
+        "\t\t}\n"
+        "\t\tv = v*10 + uint64(b&0x0F)\n"
+        "\t}\n"
+        "\tswitch sign {\n"
+        "\tcase 0x4E: // '+' (cp037)\n"
+        f"\t\treturn {go_type}(v), nil\n"
+        "\tcase 0x60: // '-' (cp037)\n"
+        f"\t\treturn {go_type}(-int64(v)), nil\n"
+        "\tdefault:\n"
+        f'\t\treturn 0, fmt.Errorf("{method_name}: separate sign byte %#02x is not \'+\' or '
+        '\'-\'", sign)\n'
+        "\t}\n"
     )
 
 
