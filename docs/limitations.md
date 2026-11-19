@@ -119,28 +119,39 @@ dropped — never silently misconverted:
   each emitted once per file, only when needed); `big.Int` on a binary
   field raises rather than guessing, since `datatypes/sizing.py`'s
   binary tier already caps at 8 bytes/`uint64` range and this slice
-  doesn't need to reach further for that usage. A nested group's
-  accessor just hands its parent's `buf` to a new struct value (no
-  allocation, no offset arithmetic needed at that level) because
+  doesn't need to reach further for that usage. Plain alphanumeric
+  (`PIC X`/`A`) fields decode via a hardcoded 256-entry cp037-to-Unicode
+  lookup table, embedded as a shared Go helper the same way
+  `decodePackedDecimal` is — generated directly from Python's own
+  `cp037` codec, not `golang.org/x/text`, so generated Go stays a
+  zero-dependency consumer the way every other usage type here already
+  is. The accessor returns a plain `string` with no error — the table
+  is total, so there's nothing to fail on — and the exact fixed-width,
+  space-padded text, matching `decode_alpha()`'s own default (no silent
+  trailing-space stripping; trimming is left to the caller). A nested
+  group's accessor just hands its parent's `buf` to a new struct value
+  (no allocation, no offset arithmetic needed at that level) because
   `FieldNode.offset` is already absolute from the record root (ADR
   0008), not relative to the immediate parent. It raises
   `UnsupportedDecodeError` (never guesses) for: more than one DSL root;
   a scalar (non-group) root; `OCCURS`; `REDEFINES` (on a group or a
-  leaf); alphanumeric/edited/national fields; `COMP-1`/`COMP-2`
-  (float); `big.Int` on a binary field; and any other resolved Go type
-  outside the plain `int8`..`int64`/`uint8`..`uint64`/`big.Int` set
-  (`string`, a forced `float32`/`float64` override). `emit="decoder"`
-  only supports `target="go"` — there is no Java flyweight decoder
-  generator yet. Verified with real round-trips, not just compile
-  checks: `tools/compile_check` builds and **runs** five generated
-  decoders (flat `DISPLAY`-only; a synthetic `DISPLAY`+`COMP-3`+binary
-  record; the real `nested_groups.cpy` fixture, two levels deep; a
-  synthetic record covering all three non-default sign placements; and
-  a synthetic record covering `big.Int` across every supported usage/
-  sign placement — no existing fixture uses any of these combinations
-  or is wide enough to need `big.Int`) against real bytes in Docker,
-  asserting the decoded values match Python's own `decode_record()`
-  exactly (ADR 0009's stated acceptance criterion).
+  leaf); edited/national fields; `COMP-1`/`COMP-2` (float); `big.Int`
+  on a binary field; and any other resolved Go type outside the plain
+  `int8`..`int64`/`uint8`..`uint64`/`big.Int` set (`string` as a forced
+  override onto a non-alphanumeric field, a forced `float32`/`float64`
+  override). `emit="decoder"` only supports `target="go"` — there is no
+  Java flyweight decoder generator yet. Verified with real round-trips,
+  not just compile checks: `tools/compile_check` builds and **runs**
+  six generated decoders (flat `DISPLAY`-only; a synthetic
+  `DISPLAY`+`COMP-3`+binary record; the real `nested_groups.cpy`
+  fixture, two levels deep; a synthetic record covering all three
+  non-default sign placements; a synthetic record covering `big.Int`
+  across every supported usage/sign placement; and a synthetic record
+  covering plain alphanumeric decode — no existing fixture uses any of
+  these combinations, is wide enough to need `big.Int`, or has a plain
+  `PIC X`/`A` field within this slice's scope alone) against real bytes
+  in Docker, asserting the decoded values match Python's own
+  `decode_record()` exactly (ADR 0009's stated acceptance criterion).
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

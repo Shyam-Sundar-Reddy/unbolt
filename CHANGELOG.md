@@ -243,6 +243,24 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against `decode_record()` directly first. 6 new tests (net, after
   retiring the now-obsolete "big.Int isn't supported" test and adding
   seven real ones).
+- Phase 10, sixth slice: plain alphanumeric (`PIC X`/`A`) decode for
+  the Go flyweight decoder. Python's `decode_alpha()` gets `cp037` for
+  free from its standard library, but Go's stdlib has no EBCDIC codec
+  at all, so this slice's real decision was hardcode-a-table vs. add
+  `golang.org/x/text` as a dependency for every consumer of generated
+  Go code - resolved in favor of hardcoding. The 256-entry
+  `cp037ToUnicode` lookup table is generated directly from Python's own
+  `cp037` codec, never typed by hand, and embedded as a shared Go
+  helper the same way `decodePackedDecimal` is. The accessor returns a
+  plain `string` with no error return (the table is total - every byte
+  decodes to something) and the exact fixed-width, space-padded text,
+  matching `decode_alpha()`'s own default. `tools/compile_check` gained
+  a sixth real round-trip: a synthetic record mixing letters,
+  digits-as-text, and trailing-space padding, its expected bytes
+  hand-computed via Python's own `cp037` codec and cross-checked
+  against `decode_record()` directly first. 3 new tests (net, after
+  retiring the now-obsolete combined "alphanumeric/edited/national"
+  test and adding four real ones).
 
 ## [0.1.1] - Released 2026-10-25
 

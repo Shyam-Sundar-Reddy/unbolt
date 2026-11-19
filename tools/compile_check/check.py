@@ -256,6 +256,42 @@ func main() {
 """
 
 
+# Alphanumeric decode (Phase 10, sixth slice): a mix of letters,
+# digits-as-text, and trailing-space padding, to exercise the cp037
+# lookup table across more than just the identity-looking ASCII range.
+# No fixture has a plain PIC X/A field within this slice's scope - a
+# synthetic copybook, bytes hand-computed (via Python's own cp037
+# codec) and cross-checked against decode_record() directly before
+# writing them here.
+_ALPHA_SOURCE = """01 REC.
+    05 NAME PIC X(10).
+    05 CODE PIC X(3).
+"""
+
+_ALPHA_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xC8, 0xC5, 0xD3, 0xD3, 0xD6, 0x40, 0x40, 0x40, 0x40, 0x40, // NAME "HELLO     "
+		0xC1, 0xC2, 0xF1, // CODE "AB1"
+	}
+	r, err := NewRec(data)
+	if err != nil {
+		panic(err)
+	}
+	if v := r.Name(); v != "HELLO     " {
+		panic(fmt.Sprintf("Name: got %q, want %q", v, "HELLO     "))
+	}
+	if v := r.Code(); v != "AB1" {
+		panic(fmt.Sprintf("Code: got %q, want %q", v, "AB1"))
+	}
+	fmt.Println("alphanumeric Go decoder round-trip: OK")
+}
+"""
+
+
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
         return Overrides()
@@ -379,15 +415,17 @@ def main() -> int:
 
     # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
     # not just compiles - the running binary must decode to the exact
-    # values Python's own decode_record() already verified. Five cases:
+    # values Python's own decode_record() already verified. Six cases:
     # flat_display.cpy (DISPLAY only), a synthetic DISPLAY+COMP-3+binary
     # record (no existing fixture combines those three within this
     # slice's scope, since mixed_usage.cpy also has COMP-1/COMP-2, which
     # isn't supported yet), nested_groups.cpy (nested group structs), a
     # synthetic record covering all three non-default sign placements
-    # (no fixture uses SIGN at all), and a synthetic record covering
-    # big.Int across every supported usage/sign placement (no fixture
-    # has a field wide enough to need it).
+    # (no fixture uses SIGN at all), a synthetic record covering big.Int
+    # across every supported usage/sign placement (no fixture has a
+    # field wide enough to need it), and a synthetic record covering
+    # plain alphanumeric decode (no fixture has a PIC X/A field within
+    # this slice's scope alone).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
@@ -404,6 +442,9 @@ def main() -> int:
     )
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "bigint", _BIGINT_SOURCE, _BIGINT_GO_MAIN
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "alpha", _ALPHA_SOURCE, _ALPHA_GO_MAIN
     )
 
     shutil.rmtree(out_dir)

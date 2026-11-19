@@ -14,9 +14,20 @@ over the same buf reference (a slice header copy, not an allocation).
 
 A SIGN IS SEPARATE sign byte is a plain '+'/'-' character (cp037:
 0x4E/0x60), checked as a literal byte value directly - no charset
-table needed for just two values, the same reasoning that keeps
-alphanumeric field decode (which would need the full table) out of
-this slice.
+table needed for just two values.
+
+Plain alphanumeric (PIC X/A) fields decode via a hardcoded 256-entry
+cp037-to-Unicode lookup table, embedded as a shared Go helper (same
+pattern as decodePackedDecimal) - generated from Python's own cp037
+codec (never guessed), not Go's golang.org/x/text, so generated Go
+code stays a zero-dependency consumer the way every other usage type
+here already is. Only cp037 is covered, same as decision 0001/0010
+assume everywhere else in this project. The accessor returns a plain
+string with no error return - every byte in a full 256-entry table
+decodes to something, so there's nothing to fail on, unlike the
+digit-validating DISPLAY/packed bodies. It returns the exact
+fixed-width text, space-padded, matching decode_alpha()'s own default
+(no silent trailing-space stripping) - trimming is left to the caller.
 
 A resolved big.Int field (never decision 0004's default for a plain
 integer - the ladder tops out at int64/uint64 - but reachable via a
@@ -31,11 +42,13 @@ Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
 generation instead of Python-side decode: OCCURS and REDEFINES fields;
 DISPLAY (unsigned, and signed via trailing/leading overpunch or
-trailing/leading SIGN IS SEPARATE), COMP-3/PACKED-DECIMAL, and
-COMP/COMP-4/COMP-5/BINARY leaf fields; and string/float resolved types
-(decision 0004's default candidate resolution never picks those for a
-plain integer field anyway, but a forced override could). Later Phase
-10 slices lift the remaining restrictions one at a time.
+trailing/leading SIGN IS SEPARATE), COMP-3/PACKED-DECIMAL,
+COMP/COMP-4/COMP-5/BINARY, and plain alphanumeric (PIC X/A) leaf
+fields; edited pictures and national/DBCS fields; and a forced
+float override (decision 0004's default candidate resolution never
+picks those for a plain integer field anyway, but a forced override
+could). Later Phase 10 slices lift the remaining restrictions one at
+a time.
 """
 
 from unbolt.datatypes.sizing import (
@@ -107,6 +120,49 @@ _PACKED_DECIMAL_BIG_HELPER = """func decodePackedDecimalBig(
 \t\tv.Neg(v)
 \t}
 \treturn v, nil
+}"""
+
+_CP037_TO_UNICODE_HELPER = """var cp037ToUnicode = [256]rune{
+\t0x0000, 0x0001, 0x0002, 0x0003, 0x009C, 0x0009, 0x0086, 0x007F,
+\t0x0097, 0x008D, 0x008E, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F,
+\t0x0010, 0x0011, 0x0012, 0x0013, 0x009D, 0x0085, 0x0008, 0x0087,
+\t0x0018, 0x0019, 0x0092, 0x008F, 0x001C, 0x001D, 0x001E, 0x001F,
+\t0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x000A, 0x0017, 0x001B,
+\t0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x0005, 0x0006, 0x0007,
+\t0x0090, 0x0091, 0x0016, 0x0093, 0x0094, 0x0095, 0x0096, 0x0004,
+\t0x0098, 0x0099, 0x009A, 0x009B, 0x0014, 0x0015, 0x009E, 0x001A,
+\t0x0020, 0x00A0, 0x00E2, 0x00E4, 0x00E0, 0x00E1, 0x00E3, 0x00E5,
+\t0x00E7, 0x00F1, 0x00A2, 0x002E, 0x003C, 0x0028, 0x002B, 0x007C,
+\t0x0026, 0x00E9, 0x00EA, 0x00EB, 0x00E8, 0x00ED, 0x00EE, 0x00EF,
+\t0x00EC, 0x00DF, 0x0021, 0x0024, 0x002A, 0x0029, 0x003B, 0x00AC,
+\t0x002D, 0x002F, 0x00C2, 0x00C4, 0x00C0, 0x00C1, 0x00C3, 0x00C5,
+\t0x00C7, 0x00D1, 0x00A6, 0x002C, 0x0025, 0x005F, 0x003E, 0x003F,
+\t0x00F8, 0x00C9, 0x00CA, 0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF,
+\t0x00CC, 0x0060, 0x003A, 0x0023, 0x0040, 0x0027, 0x003D, 0x0022,
+\t0x00D8, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067,
+\t0x0068, 0x0069, 0x00AB, 0x00BB, 0x00F0, 0x00FD, 0x00FE, 0x00B1,
+\t0x00B0, 0x006A, 0x006B, 0x006C, 0x006D, 0x006E, 0x006F, 0x0070,
+\t0x0071, 0x0072, 0x00AA, 0x00BA, 0x00E6, 0x00B8, 0x00C6, 0x00A4,
+\t0x00B5, 0x007E, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077, 0x0078,
+\t0x0079, 0x007A, 0x00A1, 0x00BF, 0x00D0, 0x00DD, 0x00DE, 0x00AE,
+\t0x005E, 0x00A3, 0x00A5, 0x00B7, 0x00A9, 0x00A7, 0x00B6, 0x00BC,
+\t0x00BD, 0x00BE, 0x005B, 0x005D, 0x00AF, 0x00A8, 0x00B4, 0x00D7,
+\t0x007B, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
+\t0x0048, 0x0049, 0x00AD, 0x00F4, 0x00F6, 0x00F2, 0x00F3, 0x00F5,
+\t0x007D, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, 0x0050,
+\t0x0051, 0x0052, 0x00B9, 0x00FB, 0x00FC, 0x00F9, 0x00FA, 0x00FF,
+\t0x005C, 0x00F7, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, 0x0058,
+\t0x0059, 0x005A, 0x00B2, 0x00D4, 0x00D6, 0x00D2, 0x00D3, 0x00D5,
+\t0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037,
+\t0x0038, 0x0039, 0x00B3, 0x00DB, 0x00DC, 0x00D9, 0x00DA, 0x009F,
+}
+
+func decodeAlphaCP037(raw []byte) string {
+\trunes := make([]rune, len(raw))
+\tfor i, b := range raw {
+\t\trunes[i] = cp037ToUnicode[b]
+\t}
+\treturn string(runes)
 }"""
 
 _PACKED_DECIMAL_HELPER = """func decodePackedDecimal(raw []byte, digits int) (int64, error) {
@@ -197,6 +253,8 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
     blocks = struct_decls + accessor_blocks
     if "packed" in needs:
         blocks.append(_PACKED_DECIMAL_HELPER)
+    if "alpha" in needs:
+        blocks.append(_CP037_TO_UNICODE_HELPER)
     if "bigint_display" in needs:
         blocks.append(_DISPLAY_DIGITS_BIG_HELPER)
     if "bigint_packed" in needs:
@@ -284,10 +342,22 @@ def _render_leaf_accessor(
         raise UnsupportedDecodeError(
             f"go decoder: COMP-1/COMP-2 field {node.name!r} isn't supported yet"
         )
-    if is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic):
+    if is_edited_pic(node.pic) or is_national_pic(node.pic):
         raise UnsupportedDecodeError(
-            f"go decoder: alphanumeric/edited/national field {node.name!r} isn't supported yet"
+            f"go decoder: edited/national field {node.name!r} isn't supported yet"
         )
+
+    method_name = go_field_name(node.name)
+    start, end = node.offset, node.offset + node.byte_size
+
+    if is_alpha_pic(node.pic):
+        # Alphanumeric fields never go through mapping's integer ladder
+        # (mapping/engine.py excludes them from candidate generation),
+        # so field_path has no entry in resolved - checking is_alpha_pic
+        # first, before ever touching resolved[field_path], is what
+        # avoids a KeyError here.
+        needs.add("alpha")
+        return _render_alpha_accessor(method_name, start, end, struct_name)
 
     resolved_type = resolved[field_path]
     # "int64 (scaled)" is decision 0002's marker for a scaled decimal
@@ -300,9 +370,6 @@ def _render_leaf_accessor(
             "supported in this slice (only int8..int64/uint8..uint64/big.Int, or a "
             "scaled int64)"
         )
-
-    method_name = go_field_name(node.name)
-    start, end = node.offset, node.offset + node.byte_size
 
     if go_type == _BIG_INT_GO_TYPE:
         return _render_bigint_leaf_accessor(node, method_name, start, end, struct_name, needs)
@@ -331,6 +398,18 @@ def _render_leaf_accessor(
     return (
         f"func (r *{struct_name}) {method_name}() ({go_type}, error) {{\n"
         f"\traw := r.buf[{start}:{end}]\n" + body + "}"
+    )
+
+
+def _render_alpha_accessor(method_name: str, start: int, end: int, struct_name: str) -> str:
+    # No error return: the cp037 table is total (every byte in 0-255
+    # maps to something), so unlike the digit-validating DISPLAY/packed
+    # bodies, there's nothing this can fail on.
+    return (
+        f"func (r *{struct_name}) {method_name}() string {{\n"
+        f"\traw := r.buf[{start}:{end}]\n"
+        "\treturn decodeAlphaCP037(raw)\n"
+        "}"
     )
 
 

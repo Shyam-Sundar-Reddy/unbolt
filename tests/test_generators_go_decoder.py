@@ -140,9 +140,28 @@ def test_nested_redefines_group_is_unsupported() -> None:
         )
 
 
-def test_alphanumeric_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="alphanumeric"):
-        _generate("01 REC.\n  05 A PIC X(3).")
+def test_alphanumeric_field_decodes_via_the_shared_cp037_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC X(3).")
+    assert "func (r *Rec) A() string {" in out
+    assert "return decodeAlphaCP037(raw)" in out
+    assert "var cp037ToUnicode = [256]rune{" in out
+    assert "func decodeAlphaCP037(raw []byte) string {" in out
+
+
+def test_alpha_pic_variant_decodes_the_same_way() -> None:
+    out = _generate("01 REC.\n  05 A PIC A(3).")
+    assert "func (r *Rec) A() string {" in out
+    assert "return decodeAlphaCP037(raw)" in out
+
+
+def test_edited_picture_field_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="edited/national"):
+        _generate("01 REC.\n  05 A PIC ZZZ9.")
+
+
+def test_national_picture_field_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="edited/national"):
+        _generate("01 REC.\n  05 A PIC N(3).")
 
 
 def test_comp1_field_is_unsupported() -> None:
