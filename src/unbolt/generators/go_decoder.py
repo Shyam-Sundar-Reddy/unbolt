@@ -7,10 +7,33 @@ output never had a byte buffer to begin with.
 Nested groups get their own struct type, mirroring generate_go()'s own
 nested-struct shape for consistency. Since FieldNode.offset is
 absolute from the record root (ADR 0008), not relative to its
-immediate parent, a nested group's accessor methods read from the
-exact same buffer at their own absolute offsets - no separate base-
-offset tracking needed; the group's accessor on its parent just hands
-over the same buf reference (a slice header copy, not an allocation).
+immediate parent, a plain (non-OCCURS) nested group's accessor methods
+read from the exact same buffer at their own absolute offsets - no
+separate base-offset tracking needed; the group's accessor on its
+parent just hands over the same buf reference (a slice header copy,
+not an allocation).
+
+OCCURS breaks that "always absolute" assumption: FieldNode.offset/
+byte_size for an OCCURS field describe only its first occurrence - any
+later occurrence i's bytes are [offset + i*byte_size, offset +
+(i+1)*byte_size). So every accessor is generated with a `base`
+parameter (a codegen-time int, not a runtime field) meaning "what
+absolute offset does this struct's own buf[0] correspond to" - 0
+everywhere a struct is reachable without ever passing through an
+OCCURS group (identical output to before OCCURS existed), and reset to
+the OCCURS group's own node.offset for everything under it, however
+deep. An OCCURS leaf gets an `index int` parameter, a bounds check, and
+`start := (offset-base) + index*byte_size`; an OCCURS group gets the
+same bounds check and reslices `r.buf[start:start+byte_size]` into a
+fresh struct value - zero allocation, just a slice header - and that
+reslice is exactly what lets the group's own children keep using
+absolute-looking literal offsets relative to *that* occurrence's start,
+with no index baked into them (every occurrence has the same internal
+layout, and the reslice already picked which one). This composes for
+OCCURS nested inside OCCURS: each level's reslice resets the
+coordinate frame again, independent of any outer level. Indexing is
+0-based, matching generate_go()'s own existing `[N]Type` array
+representation for OCCURS, not COBOL's 1-based subscripts.
 
 A SIGN IS SEPARATE sign byte is a plain '+'/'-' character (cp037:
 0x4E/0x60), checked as a literal byte value directly - no charset
@@ -40,15 +63,16 @@ uint64 range.
 
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
-generation instead of Python-side decode: OCCURS and REDEFINES fields;
-DISPLAY (unsigned, and signed via trailing/leading overpunch or
-trailing/leading SIGN IS SEPARATE), COMP-3/PACKED-DECIMAL,
-COMP/COMP-4/COMP-5/BINARY, and plain alphanumeric (PIC X/A) leaf
-fields; edited pictures and national/DBCS fields; and a forced
-float override (decision 0004's default candidate resolution never
-picks those for a plain integer field anyway, but a forced override
-could). Later Phase 10 slices lift the remaining restrictions one at
-a time.
+generation instead of Python-side decode: REDEFINES fields (on a group
+or a leaf, OCCURS or not - OCCURS and REDEFINES combined still raises,
+checked before OCCURS is ever considered); DISPLAY (unsigned, and
+signed via trailing/leading overpunch or trailing/leading SIGN IS
+SEPARATE), COMP-3/PACKED-DECIMAL, COMP/COMP-4/COMP-5/BINARY, and plain
+alphanumeric (PIC X/A) leaf fields, OCCURS or not; edited pictures and
+national/DBCS fields; and a forced float override (decision 0004's
+default candidate resolution never picks those for a plain integer
+field anyway, but a forced override could). Later Phase 10 slices lift
+the remaining restrictions one at a time.
 """
 
 from unbolt.datatypes.sizing import (
@@ -237,7 +261,9 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
     needs: set[str] = set()
     struct_decls: list[str] = []
     accessor_blocks: list[str] = []
-    struct_name = _render_group(root, root.name, resolved, needs, struct_decls, accessor_blocks)
+    struct_name = _render_group(
+        root, root.name, resolved, needs, struct_decls, accessor_blocks, root.offset
+    )
     accessor_blocks.insert(0, _root_constructor(struct_name, root.byte_size))
 
     imports = {'"fmt"'}
@@ -281,18 +307,24 @@ def _render_group(
     needs: set[str],
     struct_decls: list[str],
     accessor_blocks: list[str],
+    base: int,
 ) -> str:
     """Emits this group's struct type, then recurses into its children
     (each appending its own accessor - and, for a nested group, its own
     struct type first). Returns the Go struct type name, so the caller
     (the parent group, or generate_go_decoder for the root) can use it.
+
+    base (int): what absolute offset this group's own buf[0] corresponds
+        to - see the module docstring's OCCURS section. Applies to this
+        group's *children*; a plain child passes it straight through,
+        an OCCURS child resets it to its own node.offset.
     """
     struct_name = go_field_name(node.name)
     struct_decls.append(f"type {struct_name} struct {{\n\tbuf []byte\n}}")
     for child in node.children:
         _render_child(
             child, f"{field_path}.{child.name}", resolved, struct_name, needs,
-            struct_decls, accessor_blocks,
+            struct_decls, accessor_blocks, base,
         )
     return struct_name
 
@@ -305,9 +337,8 @@ def _render_child(
     needs: set[str],
     struct_decls: list[str],
     accessor_blocks: list[str],
+    base: int,
 ) -> None:
-    if node.occurs is not None:
-        raise UnsupportedDecodeError(f"go decoder: OCCURS field {node.name!r} isn't supported yet")
     if node.redefines is not None:
         raise UnsupportedDecodeError(
             f"go decoder: REDEFINES field {node.name!r} isn't supported yet"
@@ -316,19 +347,82 @@ def _render_child(
     method_name = go_field_name(node.name)
 
     if node.pic is None and node.children:
+        child_base = node.offset if node.occurs is not None else base
         child_struct_name = _render_group(
-            node, field_path, resolved, needs, struct_decls, accessor_blocks
+            node, field_path, resolved, needs, struct_decls, accessor_blocks, child_base
         )
-        accessor_blocks.append(
-            f"func (r *{parent_struct_name}) {method_name}() {child_struct_name} {{\n"
-            f"\treturn {child_struct_name}{{buf: r.buf}}\n"
-            "}"
-        )
+        if node.occurs is not None:
+            accessor_blocks.append(
+                _render_occurs_group_accessor(
+                    method_name, node, base, child_struct_name, parent_struct_name
+                )
+            )
+        else:
+            accessor_blocks.append(
+                f"func (r *{parent_struct_name}) {method_name}() {child_struct_name} {{\n"
+                f"\treturn {child_struct_name}{{buf: r.buf}}\n"
+                "}"
+            )
         return
 
     accessor_blocks.append(
-        _render_leaf_accessor(node, field_path, resolved, parent_struct_name, needs)
+        _render_leaf_accessor(node, field_path, resolved, parent_struct_name, needs, base)
     )
+
+
+def _render_occurs_group_accessor(
+    method_name: str,
+    node: FieldNode,
+    base: int,
+    child_struct_name: str,
+    parent_struct_name: str,
+) -> str:
+    rel_start = node.offset - base
+    return (
+        f"func (r *{parent_struct_name}) {method_name}(index int) "
+        f"({child_struct_name}, error) {{\n"
+        f"\tif index < 0 || index >= {node.occurs} {{\n"
+        f"\t\treturn {child_struct_name}{{}}, "
+        f'fmt.Errorf("{method_name}: index %d out of range [0, {node.occurs})", index)\n'
+        "\t}\n"
+        f"\tstart := {rel_start} + index*{node.byte_size}\n"
+        f"\treturn {child_struct_name}{{buf: r.buf[start : start+{node.byte_size}]}}, nil\n"
+        "}"
+    )
+
+
+def _finish_two_return_leaf(
+    method_name: str,
+    return_type: str,
+    zero_literal: str,
+    node: FieldNode,
+    base: int,
+    body: str,
+    struct_name: str,
+) -> str:
+    """Wraps a leaf body (already written in terms of a `raw` byte slice)
+    with its accessor signature and the `raw := ...` line - adding an
+    `index int` parameter and a bounds check first when node.occurs is
+    set, exactly as a non-OCCURS leaf does today when it isn't. Shared
+    by every leaf kind that already returns (T, error) unconditionally
+    (the int ladder and big.Int); plain alphanumeric has its own version
+    since its non-OCCURS form returns no error at all.
+    """
+    rel_start = node.offset - base
+    if node.occurs is None:
+        header = f"func (r *{struct_name}) {method_name}() ({return_type}, error) {{\n"
+        raw_line = f"\traw := r.buf[{rel_start}:{rel_start + node.byte_size}]\n"
+    else:
+        header = f"func (r *{struct_name}) {method_name}(index int) ({return_type}, error) {{\n"
+        raw_line = (
+            f"\tif index < 0 || index >= {node.occurs} {{\n"
+            f"\t\treturn {zero_literal}, "
+            f'fmt.Errorf("{method_name}: index %d out of range [0, {node.occurs})", index)\n'
+            "\t}\n"
+            f"\tstart := {rel_start} + index*{node.byte_size}\n"
+            f"\traw := r.buf[start : start+{node.byte_size}]\n"
+        )
+    return header + raw_line + body + "}"
 
 
 def _render_leaf_accessor(
@@ -337,6 +431,7 @@ def _render_leaf_accessor(
     resolved: dict[str, str],
     struct_name: str,
     needs: set[str],
+    base: int,
 ) -> str:
     if node.pic is None:
         raise UnsupportedDecodeError(
@@ -348,7 +443,6 @@ def _render_leaf_accessor(
         )
 
     method_name = go_field_name(node.name)
-    start, end = node.offset, node.offset + node.byte_size
 
     if is_alpha_pic(node.pic):
         # Alphanumeric fields never go through mapping's integer ladder
@@ -357,7 +451,7 @@ def _render_leaf_accessor(
         # first, before ever touching resolved[field_path], is what
         # avoids a KeyError here.
         needs.add("alpha")
-        return _render_alpha_accessor(method_name, start, end, struct_name)
+        return _render_alpha_accessor(method_name, node, base, struct_name)
 
     resolved_type = resolved[field_path]
     # "int64 (scaled)" is decision 0002's marker for a scaled decimal
@@ -372,7 +466,7 @@ def _render_leaf_accessor(
         )
 
     if go_type == _BIG_INT_GO_TYPE:
-        return _render_bigint_leaf_accessor(node, method_name, start, end, struct_name, needs)
+        return _render_bigint_leaf_accessor(node, method_name, struct_name, needs, base)
 
     if is_packed_usage(node.usage):
         needs.add("packed")
@@ -395,20 +489,32 @@ def _render_leaf_accessor(
             f"slice, got {node.usage!r} for {node.name!r}"
         )
 
-    return (
-        f"func (r *{struct_name}) {method_name}() ({go_type}, error) {{\n"
-        f"\traw := r.buf[{start}:{end}]\n" + body + "}"
-    )
+    return _finish_two_return_leaf(method_name, go_type, "0", node, base, body, struct_name)
 
 
-def _render_alpha_accessor(method_name: str, start: int, end: int, struct_name: str) -> str:
-    # No error return: the cp037 table is total (every byte in 0-255
-    # maps to something), so unlike the digit-validating DISPLAY/packed
-    # bodies, there's nothing this can fail on.
+def _render_alpha_accessor(method_name: str, node: FieldNode, base: int, struct_name: str) -> str:
+    # No error return in the non-OCCURS case: the cp037 table is total
+    # (every byte in 0-255 maps to something), so unlike the
+    # digit-validating DISPLAY/packed bodies, there's nothing to fail
+    # on - except the OCCURS index itself, which is why the OCCURS form
+    # below gains an error return the plain form doesn't need.
+    rel_start = node.offset - base
+    if node.occurs is None:
+        return (
+            f"func (r *{struct_name}) {method_name}() string {{\n"
+            f"\traw := r.buf[{rel_start}:{rel_start + node.byte_size}]\n"
+            "\treturn decodeAlphaCP037(raw)\n"
+            "}"
+        )
     return (
-        f"func (r *{struct_name}) {method_name}() string {{\n"
-        f"\traw := r.buf[{start}:{end}]\n"
-        "\treturn decodeAlphaCP037(raw)\n"
+        f"func (r *{struct_name}) {method_name}(index int) (string, error) {{\n"
+        f"\tif index < 0 || index >= {node.occurs} {{\n"
+        f'\t\treturn "", fmt.Errorf("{method_name}: index %d out of range '
+        f'[0, {node.occurs})", index)\n'
+        "\t}\n"
+        f"\tstart := {rel_start} + index*{node.byte_size}\n"
+        f"\traw := r.buf[start : start+{node.byte_size}]\n"
+        "\treturn decodeAlphaCP037(raw), nil\n"
         "}"
     )
 
@@ -416,10 +522,9 @@ def _render_alpha_accessor(method_name: str, start: int, end: int, struct_name: 
 def _render_bigint_leaf_accessor(
     node: FieldNode,
     method_name: str,
-    start: int,
-    end: int,
     struct_name: str,
     needs: set[str],
+    base: int,
 ) -> str:
     needs.add("bigint")
     if is_packed_usage(node.usage):
@@ -441,10 +546,7 @@ def _render_bigint_leaf_accessor(
             f"slice, got {node.usage!r} for {node.name!r}"
         )
 
-    return (
-        f"func (r *{struct_name}) {method_name}() (*big.Int, error) {{\n"
-        f"\traw := r.buf[{start}:{end}]\n" + body + "}"
-    )
+    return _finish_two_return_leaf(method_name, "*big.Int", "nil", node, base, body, struct_name)
 
 
 def _unsigned_display_body_big(method_name: str) -> str:

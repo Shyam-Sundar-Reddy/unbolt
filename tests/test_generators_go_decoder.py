@@ -70,9 +70,29 @@ def test_scalar_root_is_unsupported() -> None:
         _generate("01 X PIC 9(1).")
 
 
-def test_occurs_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
-        _generate("01 REC.\n  05 A PIC 9(1) OCCURS 3 TIMES.")
+def test_leaf_occurs_field_gets_an_indexed_accessor() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(1) OCCURS 3 TIMES.")
+    assert "func (r *Rec) A(index int) (int8, error) {" in out
+    assert "if index < 0 || index >= 3 {" in out
+    assert 'fmt.Errorf("A: index %d out of range [0, 3)", index)' in out
+    assert "start := 0 + index*1" in out
+    assert "raw := r.buf[start : start+1]" in out
+
+
+def test_leaf_occurs_on_alpha_field_gains_an_error_return() -> None:
+    out = _generate("01 REC.\n  05 A PIC X(2) OCCURS 3 TIMES.")
+    assert "func (r *Rec) A(index int) (string, error) {" in out
+    assert 'return "", fmt.Errorf("A: index %d out of range [0, 3)", index)' in out
+    assert "return decodeAlphaCP037(raw), nil" in out
+
+
+def test_leaf_occurs_on_big_int_field_gains_a_bounds_check() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A PIC S9(19) OCCURS 2 TIMES."), source_file="<t>")
+    report = recommend_mappings(dsl, "go")
+    resolved = resolve_mapping(report, Overrides())
+    out = generate_go_decoder(dsl, resolved)
+    assert "func (r *Rec) A(index int) (*big.Int, error) {" in out
+    assert 'return nil, fmt.Errorf("A: index %d out of range [0, 2)", index)' in out
 
 
 def test_redefines_field_is_unsupported() -> None:
@@ -122,9 +142,43 @@ def test_doubly_nested_groups_each_get_their_own_struct() -> None:
     assert "func (r *Inner) A() (int8, error) {" in out
 
 
-def test_nested_occurs_group_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
-        _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")
+def test_occurs_group_gets_an_indexed_accessor_that_reslices() -> None:
+    out = _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")
+    assert "func (r *Rec) Grp(index int) (Grp, error) {" in out
+    assert "if index < 0 || index >= 3 {" in out
+    assert 'return Grp{}, fmt.Errorf("Grp: index %d out of range [0, 3)", index)' in out
+    assert "start := 0 + index*1" in out
+    assert "return Grp{buf: r.buf[start : start+1]}, nil" in out
+    # The group's own child reads a relative offset (0), not GRP's
+    # absolute record-root offset - this is the part that would be
+    # wrong if base-rebasing weren't applied at all.
+    assert "func (r *Grp) A() (int8, error) {" in out
+    assert "raw := r.buf[0:1]" in out
+
+
+def test_occurs_inside_occurs_rebases_independently_per_level() -> None:
+    out = _generate(
+        "01 REC.\n  05 OUTER OCCURS 2 TIMES.\n    10 INNER OCCURS 3 TIMES.\n      15 A PIC 9(1)."
+    )
+    assert "func (r *Rec) Outer(index int) (Outer, error) {" in out
+    assert "start := 0 + index*3" in out
+    assert "func (r *Outer) Inner(index int) (Inner, error) {" in out
+    assert "start := 0 + index*1" in out
+    assert "func (r *Inner) A() (int8, error) {" in out
+    assert "raw := r.buf[0:1]" in out
+
+
+def test_occurs_field_with_redefines_still_rejected_for_redefines() -> None:
+    dsl = build_dsl(
+        parse_copybook(
+            "01 REC.\n  05 A PIC 9(3) OCCURS 3 TIMES.\n  05 B REDEFINES A PIC X(3) OCCURS 3 TIMES."
+        ),
+        source_file="<t>",
+    )
+    report = recommend_mappings(dsl, "go")
+    resolved = resolve_mapping(report, Overrides())
+    with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
+        generate_go_decoder(dsl, resolved)
 
 
 def test_nested_redefines_group_is_unsupported() -> None:

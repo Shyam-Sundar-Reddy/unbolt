@@ -292,6 +292,64 @@ func main() {
 """
 
 
+# OCCURS (Phase 10, seventh slice): the real occurs_table.cpy fixture -
+# a leaf OCCURS count field's sibling group, OCCURS 5 TIMES, each
+# occurrence itself a group with an alphanumeric and a DISPLAY field.
+# decode_record() doesn't support OCCURS yet (phase.md Phase 8, still
+# open), so this one can't be cross-checked against it directly - bytes
+# are instead hand-computed and verified against the same leaf-level
+# decode_display()/decode_alpha() primitives decode_record() would
+# itself dispatch to, applied by hand per occurrence, before being
+# hardcoded into the Go main.
+_OCCURS_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	data := []byte{
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF0, 0xF3, 0xE6, 0xC9, 0xC4, 0xC7,
+		0xC5, 0xE3, 0x40, 0x40, 0x40, 0x40, 0xF0, 0xF0, 0xF1, 0xF0,
+		0xC7, 0xC1, 0xC4, 0xC7, 0xC5, 0xE3, 0x40, 0x40, 0x40, 0x40,
+		0xF0, 0xF0, 0xF2, 0xF5, 0xC7, 0xC9, 0xE9, 0xD4, 0xD6, 0x40,
+		0x40, 0x40, 0x40, 0x40, 0xF0, 0xF0, 0xF0, 0xF7, 0x40, 0x40,
+		0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0xF0, 0xF0,
+		0xF0, 0xF0, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40,
+		0x40, 0x40, 0xF0, 0xF0, 0xF0, 0xF0,
+	}
+	r, err := NewInventoryRecord(data)
+	if err != nil {
+		panic(err)
+	}
+	if v, err := r.WarehouseId(); err != nil || v != 1234 {
+		panic(fmt.Sprintf("WarehouseId: got (%v, %v), want (1234, nil)", v, err))
+	}
+	if v, err := r.ItemCount(); err != nil || v != 3 {
+		panic(fmt.Sprintf("ItemCount: got (%v, %v), want (3, nil)", v, err))
+	}
+	wantSkus := []string{"WIDGET    ", "GADGET    ", "GIZMO     ", "          ", "          "}
+	wantQtys := []int16{10, 25, 7, 0, 0}
+	for i := 0; i < 5; i++ {
+		item, err := r.ItemTable(i)
+		if err != nil {
+			panic(fmt.Sprintf("ItemTable(%d): %v", i, err))
+		}
+		if sku := item.ItemSku(); sku != wantSkus[i] {
+			panic(fmt.Sprintf("ItemTable(%d).ItemSku: got %q, want %q", i, sku, wantSkus[i]))
+		}
+		if qty, err := item.ItemQty(); err != nil || qty != wantQtys[i] {
+			panic(fmt.Sprintf(
+				"ItemTable(%d).ItemQty: got (%v, %v), want (%d, nil)", i, qty, err, wantQtys[i],
+			))
+		}
+	}
+	if _, err := r.ItemTable(5); err == nil {
+		panic("ItemTable(5): want an out-of-range error, got nil")
+	}
+	fmt.Println("OCCURS Go decoder round-trip: OK")
+}
+"""
+
+
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
         return Overrides()
@@ -415,17 +473,21 @@ def main() -> int:
 
     # Go flyweight decoder (ADR 0009, Phase 10): real round-trip checks,
     # not just compiles - the running binary must decode to the exact
-    # values Python's own decode_record() already verified. Six cases:
-    # flat_display.cpy (DISPLAY only), a synthetic DISPLAY+COMP-3+binary
-    # record (no existing fixture combines those three within this
-    # slice's scope, since mixed_usage.cpy also has COMP-1/COMP-2, which
-    # isn't supported yet), nested_groups.cpy (nested group structs), a
+    # values Python's own decode_record() already verified (except the
+    # OCCURS case below, where decode_record() itself doesn't support
+    # OCCURS yet - see its own comment). Seven cases: flat_display.cpy
+    # (DISPLAY only), a synthetic DISPLAY+COMP-3+binary record (no
+    # existing fixture combines those three within this slice's scope,
+    # since mixed_usage.cpy also has COMP-1/COMP-2, which isn't
+    # supported yet), nested_groups.cpy (nested group structs), a
     # synthetic record covering all three non-default sign placements
     # (no fixture uses SIGN at all), a synthetic record covering big.Int
     # across every supported usage/sign placement (no fixture has a
-    # field wide enough to need it), and a synthetic record covering
-    # plain alphanumeric decode (no fixture has a PIC X/A field within
-    # this slice's scope alone).
+    # field wide enough to need it), a synthetic record covering plain
+    # alphanumeric decode (no fixture has a PIC X/A field within this
+    # slice's scope alone), and occurs_table.cpy (leaf OCCURS count
+    # sibling to a group OCCURS, exercising the indexed-accessor/reslice
+    # mechanism end to end, including an out-of-range index).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
@@ -445,6 +507,9 @@ def main() -> int:
     )
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "alpha", _ALPHA_SOURCE, _ALPHA_GO_MAIN
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "occurs", (FIXTURES_DIR / "occurs_table.cpy").read_text(), _OCCURS_GO_MAIN,
     )
 
     shutil.rmtree(out_dir)

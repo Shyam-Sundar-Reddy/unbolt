@@ -132,26 +132,50 @@ dropped — never silently misconverted:
   group's accessor just hands its parent's `buf` to a new struct value
   (no allocation, no offset arithmetic needed at that level) because
   `FieldNode.offset` is already absolute from the record root (ADR
-  0008), not relative to the immediate parent. It raises
-  `UnsupportedDecodeError` (never guesses) for: more than one DSL root;
-  a scalar (non-group) root; `OCCURS`; `REDEFINES` (on a group or a
-  leaf); edited/national fields; `COMP-1`/`COMP-2` (float); `big.Int`
-  on a binary field; and any other resolved Go type outside the plain
-  `int8`..`int64`/`uint8`..`uint64`/`big.Int` set (`string` as a forced
-  override onto a non-alphanumeric field, a forced `float32`/`float64`
-  override). `emit="decoder"` only supports `target="go"` — there is no
-  Java flyweight decoder generator yet. Verified with real round-trips,
-  not just compile checks: `tools/compile_check` builds and **runs**
-  six generated decoders (flat `DISPLAY`-only; a synthetic
-  `DISPLAY`+`COMP-3`+binary record; the real `nested_groups.cpy`
-  fixture, two levels deep; a synthetic record covering all three
-  non-default sign placements; a synthetic record covering `big.Int`
-  across every supported usage/sign placement; and a synthetic record
-  covering plain alphanumeric decode — no existing fixture uses any of
-  these combinations, is wide enough to need `big.Int`, or has a plain
-  `PIC X`/`A` field within this slice's scope alone) against real bytes
-  in Docker, asserting the decoded values match Python's own
-  `decode_record()` exactly (ADR 0009's stated acceptance criterion).
+  0008), not relative to the immediate parent — true for any group
+  reachable without ever passing through an `OCCURS` group. `OCCURS`
+  (leaf or group) gets an indexed accessor instead: a bounds-checked
+  `index int` parameter, and `start := (offset-base) + index*byte_size`
+  where `base` is a codegen-time-only value (0 unless the field is
+  under an `OCCURS` group, in which case it resets to that group's own
+  offset for everything beneath it, however deep — composes correctly
+  for `OCCURS` nested inside `OCCURS`, since each level's reslice
+  resets the coordinate frame again). An `OCCURS` group's accessor
+  reslices `r.buf[start:start+byte_size]` into a fresh struct value —
+  still zero allocation, just a slice header — and that reslice is what
+  lets the group's own children keep using plain per-occurrence-
+  relative offsets with no index baked into their generated bodies.
+  Indexing is 0-based, matching `generate_go()`'s own existing
+  `[N]Type` array representation for `OCCURS`, not COBOL's 1-based
+  subscripts. Plain alphanumeric's non-`OCCURS` accessor has no error
+  return (the cp037 table is total), but gains one under `OCCURS`, for
+  the bounds check alone. It raises `UnsupportedDecodeError` (never
+  guesses) for: more than one DSL root; a scalar (non-group) root;
+  `REDEFINES` (on a group or a leaf, `OCCURS` or not — checked before
+  `OCCURS` is ever considered); edited/national fields; `COMP-1`/
+  `COMP-2` (float); `big.Int` on a binary field; and any other resolved
+  Go type outside the plain `int8`..`int64`/`uint8`..`uint64`/`big.Int`
+  set (`string` as a forced override onto a non-alphanumeric field, a
+  forced `float32`/`float64` override). `emit="decoder"` only supports
+  `target="go"` — there is no Java flyweight decoder generator yet.
+  Verified with real round-trips, not just compile checks:
+  `tools/compile_check` builds and **runs** seven generated decoders
+  (flat `DISPLAY`-only; a synthetic `DISPLAY`+`COMP-3`+binary record;
+  the real `nested_groups.cpy` fixture, two levels deep; a synthetic
+  record covering all three non-default sign placements; a synthetic
+  record covering `big.Int` across every supported usage/sign
+  placement; a synthetic record covering plain alphanumeric decode;
+  and the real `occurs_table.cpy` fixture, a leaf `OCCURS` count
+  sibling to a group `OCCURS`, including an out-of-range index — no
+  existing fixture uses any of the synthetic combinations, is wide
+  enough to need `big.Int`, or has a plain `PIC X`/`A` field within
+  this slice's scope alone) against real bytes in Docker, asserting
+  the decoded values match Python's own `decode_record()` exactly
+  (ADR 0009's stated acceptance criterion) — except the `OCCURS` case,
+  where `decode_record()` itself doesn't support `OCCURS` yet (see
+  "Record decoding" above), so its expected values are instead
+  cross-checked against the same leaf-level `decode_display()`/
+  `decode_alpha()` primitives applied by hand, per occurrence.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

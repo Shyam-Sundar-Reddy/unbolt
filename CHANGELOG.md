@@ -261,6 +261,28 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against `decode_record()` directly first. 3 new tests (net, after
   retiring the now-obsolete combined "alphanumeric/edited/national"
   test and adding four real ones).
+- Phase 10, seventh slice: `OCCURS` support (leaf and group fields) for
+  the Go flyweight decoder. Every accessor now threads a codegen-time
+  `base` value (never a runtime struct field) meaning "what absolute
+  offset does this struct's buf[0] correspond to" - 0 everywhere a
+  struct is reachable without ever passing through an `OCCURS` group
+  (every struct that existed before this slice, so existing generated
+  output is unchanged), reset to that group's own offset for everything
+  beneath it otherwise. A leaf under `OCCURS` gains an `index int`
+  parameter and a bounds check; a group under `OCCURS` reslices
+  `r.buf[start:start+byte_size]` into a fresh struct value (still zero
+  allocation), which is what lets the group's own children keep
+  emitting plain per-occurrence-relative offsets with no index baked
+  into them. Composes correctly for `OCCURS` nested inside `OCCURS`.
+  Indexing is 0-based, matching `generate_go()`'s own existing
+  `[N]Type` array convention. `tools/compile_check` gained a seventh
+  real round-trip: the real `occurs_table.cpy` fixture, including an
+  out-of-range index - since `decode_record()` doesn't support `OCCURS`
+  yet, its expected bytes were cross-checked against the same
+  leaf-level `decode_display()`/`decode_alpha()` primitives applied by
+  hand per occurrence, rather than against `decode_record()` as a
+  whole. 4 new tests (net, after retiring two now-obsolete "OCCURS
+  isn't supported" tests and adding six real ones).
 
 ## [0.1.1] - Released 2026-10-25
 
