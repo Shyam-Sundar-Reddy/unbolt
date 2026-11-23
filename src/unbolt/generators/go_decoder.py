@@ -61,10 +61,35 @@ decodePackedDecimalBig) - COMP/COMP-4/COMP-5/BINARY never needs it,
 since datatypes/sizing.py's binary tier already caps at 8 bytes/
 uint64 range.
 
+REDEFINES gets its real answer here too (ADR 0009: "the decoder's
+variant dispatch decides which overlaid view is active"), but only
+when the caller explicitly declares how via a `redefines` config
+passed to generate_go_decoder() - never inferred, since bare COBOL
+REDEFINES syntax doesn't itself name a discriminator field the way
+Phase 9's variants/config.py's own JSON config does for a
+whole-record variant. Scoped narrowly: the target and every field that
+REDEFINES it must each be a group (not a leaf - a leaf-level overlay
+is a different, simpler shape left for later), the discriminator must
+be a direct sibling of the target (same immediate parent - not an
+arbitrary ancestor), a single elementary non-OCCURS field (the same
+restriction variants/config.py's own validate_variant_config places on
+its discriminator), and neither the target, its siblings, nor the
+discriminator may themselves be OCCURS (REDEFINES-inside-OCCURS is a
+separate, harder shape). Mirrors Go's own lack of a "sealed interface"
+language feature with ADR 0009's own named mechanism: a marker
+interface plus one dispatcher method (named after the target) that
+decodes the discriminator and type-switches to the matching variant's
+struct, all sharing the same `r.buf` the target itself would have used
+(REDEFINES shares bytes, it doesn't reslice). This is this module's
+decoder-generation step only - unbolt.decoding's own decode_record()
+still decodes every overlaid view independently side by side
+(Phase 8's own, separately-scoped behavior), unaffected.
+
 Scope, enforced by raising rather than guessing - mirrors
 unbolt.decoding's own incremental slicing (Phase 8) applied to code
-generation instead of Python-side decode: REDEFINES fields (on a group
-or a leaf, OCCURS or not - OCCURS and REDEFINES combined still raises,
+generation instead of Python-side decode: a REDEFINES field with no
+matching `redefines` config entry for its target (on a group or a
+leaf, OCCURS or not - OCCURS and REDEFINES combined still raises,
 checked before OCCURS is ever considered); DISPLAY (unsigned, and
 signed via trailing/leading overpunch or trailing/leading SIGN IS
 SEPARATE), COMP-3/PACKED-DECIMAL, COMP/COMP-4/COMP-5/BINARY, and plain
@@ -74,6 +99,9 @@ default candidate resolution never picks those for a plain integer
 field anyway, but a forced override could). Later Phase 10 slices lift
 the remaining restrictions one at a time.
 """
+
+import json
+from dataclasses import dataclass
 
 from unbolt.datatypes.sizing import (
     is_alpha_pic,
@@ -85,6 +113,42 @@ from unbolt.datatypes.sizing import (
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.exceptions import UnsupportedDecodeError
 from unbolt.generators.naming import go_field_name
+
+
+@dataclass(frozen=True, slots=True)
+class RedefinesRule:
+    """One discriminator value -> which overlaid view is active.
+
+    Args: value (str): the discriminator field's decoded value as text -
+            compared as an exact string for an alphanumeric
+            discriminator, or numerically otherwise (same convention as
+            unbolt.variants.dispatch.select_variant's own rule values).
+        variant (str): the COBOL field name of the active view for this
+            value - either the REDEFINES target's own name, or the name
+            of a field that REDEFINES it directly.
+    """
+
+    value: str
+    variant: str
+
+
+@dataclass(frozen=True, slots=True)
+class RedefinesDispatch:
+    """Declares how to pick the active overlaid view for one REDEFINES
+    target field, keyed by the target's own COBOL name in
+    generate_go_decoder()'s `redefines` parameter.
+
+    Args: discriminator (str): the COBOL name of a sibling field (same
+            immediate parent group as the target) whose decoded value
+            selects which view is active - must be a single elementary,
+            non-OCCURS field.
+        rules (tuple[RedefinesRule, ...]): value -> variant, covering
+            every value this record can carry; an unmatched value
+            raises at decode time rather than guessing.
+    """
+
+    discriminator: str
+    rules: tuple[RedefinesRule, ...]
 
 _INTEGER_GO_TYPES = frozenset(
     {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"}
@@ -222,7 +286,9 @@ _PACKED_DECIMAL_HELPER = """func decodePackedDecimal(raw []byte, digits int) (in
 }"""
 
 
-def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
+def generate_go_decoder(
+    dsl: Dsl, resolved: dict[str, str], *, redefines: dict[str, RedefinesDispatch] | None = None
+) -> str:
     """Emit a flyweight Go decoder: one struct per group (root and
     nested), one accessor method per field reading straight from the
     buffer.
@@ -235,6 +301,11 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
             generators.resolve_mapping() (the same input generate_go()
             takes) - the flyweight decoder returns the identical Go
             type the plain struct generator would have chosen.
+        redefines (dict[str, RedefinesDispatch] | None): REDEFINES
+            target field name -> how to pick its active overlaid view
+            at decode time (see module docstring and RedefinesDispatch).
+            A REDEFINES field with no entry for its target here still
+            raises, exactly as before this parameter existed.
     Returns: str: a complete .go source file (package generated).
     Raises:
         UnsupportedDecodeError: the DSL or a field is outside this
@@ -262,7 +333,8 @@ def generate_go_decoder(dsl: Dsl, resolved: dict[str, str]) -> str:
     struct_decls: list[str] = []
     accessor_blocks: list[str] = []
     struct_name = _render_group(
-        root, root.name, resolved, needs, struct_decls, accessor_blocks, root.offset
+        root, root.name, resolved, needs, struct_decls, accessor_blocks, root.offset,
+        redefines or {},
     )
     accessor_blocks.insert(0, _root_constructor(struct_name, root.byte_size))
 
@@ -308,6 +380,7 @@ def _render_group(
     struct_decls: list[str],
     accessor_blocks: list[str],
     base: int,
+    redefines: dict[str, RedefinesDispatch],
 ) -> str:
     """Emits this group's struct type, then recurses into its children
     (each appending its own accessor - and, for a nested group, its own
@@ -318,13 +391,37 @@ def _render_group(
         to - see the module docstring's OCCURS section. Applies to this
         group's *children*; a plain child passes it straight through,
         an OCCURS child resets it to its own node.offset.
+    redefines: see generate_go_decoder's own parameter. A direct child
+        whose own name is a key here is a REDEFINES dispatch target;
+        its overlay siblings (children whose `.redefines` names that
+        same target) are rendered as part of its dispatch block, not
+        independently - resolved once per group, from this group's own
+        direct children only (REDEFINES is always resolved among
+        siblings, never across groups).
     """
     struct_name = go_field_name(node.name)
     struct_decls.append(f"type {struct_name} struct {{\n\tbuf []byte\n}}")
+
+    dispatch_targets = {child.name: child for child in node.children if child.name in redefines}
+    absorbed = {
+        child.name
+        for child in node.children
+        if child.redefines is not None and child.redefines in dispatch_targets
+    }
     for child in node.children:
+        if child.name in absorbed:
+            continue
+        if child.name in dispatch_targets:
+            siblings = [c for c in node.children if c.redefines == child.name]
+            _render_redefines_dispatch(
+                child, siblings, node.children, field_path, resolved,
+                needs, struct_decls, accessor_blocks, base, struct_name, redefines[child.name],
+                redefines,
+            )
+            continue
         _render_child(
             child, f"{field_path}.{child.name}", resolved, struct_name, needs,
-            struct_decls, accessor_blocks, base,
+            struct_decls, accessor_blocks, base, redefines,
         )
     return struct_name
 
@@ -338,6 +435,7 @@ def _render_child(
     struct_decls: list[str],
     accessor_blocks: list[str],
     base: int,
+    redefines: dict[str, RedefinesDispatch],
 ) -> None:
     if node.redefines is not None:
         raise UnsupportedDecodeError(
@@ -349,7 +447,8 @@ def _render_child(
     if node.pic is None and node.children:
         child_base = node.offset if node.occurs is not None else base
         child_struct_name = _render_group(
-            node, field_path, resolved, needs, struct_decls, accessor_blocks, child_base
+            node, field_path, resolved, needs, struct_decls, accessor_blocks, child_base,
+            redefines,
         )
         if node.occurs is not None:
             accessor_blocks.append(
@@ -389,6 +488,128 @@ def _render_occurs_group_accessor(
         f"\treturn {child_struct_name}{{buf: r.buf[start : start+{node.byte_size}]}}, nil\n"
         "}"
     )
+
+
+def _render_redefines_dispatch(
+    target: FieldNode,
+    overlay_siblings: list[FieldNode],
+    parent_children: tuple[FieldNode, ...],
+    field_path: str,
+    resolved: dict[str, str],
+    needs: set[str],
+    struct_decls: list[str],
+    accessor_blocks: list[str],
+    base: int,
+    parent_struct_name: str,
+    dispatch: RedefinesDispatch,
+    redefines: dict[str, RedefinesDispatch],
+) -> None:
+    """Emits every overlaid view's struct, a marker interface, and one
+    dispatcher method (named after `target`) that decodes `dispatch`'s
+    discriminator and type-switches to the active view - see the
+    module docstring's REDEFINES section for the scope this enforces.
+    """
+    variants = [target, *overlay_siblings]
+    for variant in variants:
+        if variant.pic is not None or not variant.children:
+            raise UnsupportedDecodeError(
+                f"go decoder: REDEFINES dispatch on {variant.name!r} requires a group - "
+                "a leaf-level overlay isn't supported yet"
+            )
+        if variant.occurs is not None:
+            raise UnsupportedDecodeError(
+                f"go decoder: REDEFINES dispatch combined with OCCURS on {variant.name!r} "
+                "isn't supported yet"
+            )
+
+    variant_by_name = {variant.name: variant for variant in variants}
+    for rule in dispatch.rules:
+        if rule.variant not in variant_by_name:
+            raise UnsupportedDecodeError(
+                f"go decoder: REDEFINES dispatch for {target.name!r}: rule variant "
+                f"{rule.variant!r} is neither the target nor one of its REDEFINES siblings"
+            )
+
+    discriminator = next(
+        (c for c in parent_children if c.name == dispatch.discriminator), None
+    )
+    if discriminator is None:
+        raise UnsupportedDecodeError(
+            f"go decoder: REDEFINES dispatch for {target.name!r}: discriminator "
+            f"{dispatch.discriminator!r} isn't a sibling field"
+        )
+    if discriminator.pic is None or discriminator.occurs is not None:
+        raise UnsupportedDecodeError(
+            f"go decoder: REDEFINES dispatch for {target.name!r}: discriminator "
+            f"{dispatch.discriminator!r} must be a single elementary, non-OCCURS field"
+        )
+    if is_edited_pic(discriminator.pic) or is_national_pic(discriminator.pic):
+        raise UnsupportedDecodeError(
+            f"go decoder: REDEFINES dispatch for {target.name!r}: edited/national "
+            f"discriminator {dispatch.discriminator!r} isn't supported"
+        )
+
+    target_struct_name = go_field_name(target.name)
+    target_method_name = target_struct_name
+    interface_name = f"{target_struct_name}Overlay"
+    marker_method = f"is{target_struct_name}Overlay"
+
+    variant_struct_names: dict[str, str] = {}
+    for variant in variants:
+        variant_struct_name = _render_group(
+            variant, f"{field_path}.{variant.name}", resolved, needs, struct_decls,
+            accessor_blocks, base, redefines,
+        )
+        variant_struct_names[variant.name] = variant_struct_name
+        struct_decls.append(f"func ({variant_struct_name}) {marker_method}() {{}}")
+
+    struct_decls.append(f"type {interface_name} interface {{\n\t{marker_method}()\n}}")
+
+    discriminator_is_alpha = is_alpha_pic(discriminator.pic)
+    discriminator_method = go_field_name(discriminator.name)
+    if discriminator_is_alpha:
+        call = f"\tdiscriminator := r.{discriminator_method}()\n"
+    else:
+        call = (
+            f"\tdiscriminator, err := r.{discriminator_method}()\n"
+            "\tif err != nil {\n"
+            "\t\treturn nil, err\n"
+            "\t}\n"
+        )
+
+    cases = []
+    for rule in dispatch.rules:
+        literal = _redefines_rule_literal(rule.value, discriminator_is_alpha, target.name)
+        variant_struct_name = variant_struct_names[rule.variant]
+        cases.append(
+            f"\tcase {literal}:\n"
+            f"\t\treturn {variant_struct_name}{{buf: r.buf}}, nil\n"
+        )
+
+    body = (
+        f"func (r *{parent_struct_name}) {target_method_name}() ({interface_name}, error) {{\n"
+        + call
+        + "\tswitch discriminator {\n"
+        + "".join(cases)
+        + "\tdefault:\n"
+        f'\t\treturn nil, fmt.Errorf("{target_method_name}: discriminator %v matches no '
+        'configured variant", discriminator)\n'
+        "\t}\n"
+        "}"
+    )
+    accessor_blocks.append(body)
+
+
+def _redefines_rule_literal(value: str, is_alpha: bool, target_name: str) -> str:
+    if is_alpha:
+        return json.dumps(value)
+    try:
+        return str(int(value))
+    except ValueError:
+        raise UnsupportedDecodeError(
+            f"go decoder: REDEFINES dispatch for {target_name!r}: rule value {value!r} "
+            "isn't a valid integer for its numeric discriminator"
+        ) from None
 
 
 def _finish_two_return_leaf(

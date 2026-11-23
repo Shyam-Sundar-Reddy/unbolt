@@ -85,10 +85,13 @@ dropped — never silently misconverted:
 
 - **Go and Java only.** Rust/TypeScript/Avro/Protobuf/etc. are Extended
   scope (goal.md §7) — not implemented, not partially implemented.
-- **`REDEFINES` codegen is struct-shape only** (decision 0005): the
-  original and redefining items become two independent fields with a
-  comment, not a real memory overlay. True union/overlay semantics are
-  deferred until a record decoder exists to actually need them.
+- **`REDEFINES` codegen is struct-shape only for the plain type
+  generators** (decision 0005, unrevised for this output): the original
+  and redefining items become two independent fields with a comment,
+  not a real memory overlay, in `generate_go()`/`generate_java()`. The
+  Go flyweight decoder has a real answer now (see its own bullet
+  below) — decision 0005 is superseded for that output only, per
+  ADR 0009.
 - **Go's decimal scale isn't self-describing.** A scaled `int64` field
   (decision 0002) requires the caller to know and apply the scale
   manually — nothing generated computes `value / 10^scale` for you.
@@ -149,33 +152,61 @@ dropped — never silently misconverted:
   `[N]Type` array representation for `OCCURS`, not COBOL's 1-based
   subscripts. Plain alphanumeric's non-`OCCURS` accessor has no error
   return (the cp037 table is total), but gains one under `OCCURS`, for
-  the bounds check alone. It raises `UnsupportedDecodeError` (never
-  guesses) for: more than one DSL root; a scalar (non-group) root;
-  `REDEFINES` (on a group or a leaf, `OCCURS` or not — checked before
-  `OCCURS` is ever considered); edited/national fields; `COMP-1`/
-  `COMP-2` (float); `big.Int` on a binary field; and any other resolved
-  Go type outside the plain `int8`..`int64`/`uint8`..`uint64`/`big.Int`
-  set (`string` as a forced override onto a non-alphanumeric field, a
-  forced `float32`/`float64` override). `emit="decoder"` only supports
-  `target="go"` — there is no Java flyweight decoder generator yet.
-  Verified with real round-trips, not just compile checks:
-  `tools/compile_check` builds and **runs** seven generated decoders
-  (flat `DISPLAY`-only; a synthetic `DISPLAY`+`COMP-3`+binary record;
-  the real `nested_groups.cpy` fixture, two levels deep; a synthetic
-  record covering all three non-default sign placements; a synthetic
-  record covering `big.Int` across every supported usage/sign
-  placement; a synthetic record covering plain alphanumeric decode;
-  and the real `occurs_table.cpy` fixture, a leaf `OCCURS` count
-  sibling to a group `OCCURS`, including an out-of-range index — no
-  existing fixture uses any of the synthetic combinations, is wide
-  enough to need `big.Int`, or has a plain `PIC X`/`A` field within
-  this slice's scope alone) against real bytes in Docker, asserting
-  the decoded values match Python's own `decode_record()` exactly
-  (ADR 0009's stated acceptance criterion) — except the `OCCURS` case,
-  where `decode_record()` itself doesn't support `OCCURS` yet (see
-  "Record decoding" above), so its expected values are instead
-  cross-checked against the same leaf-level `decode_display()`/
-  `decode_alpha()` primitives applied by hand, per occurrence.
+  the bounds check alone. **`REDEFINES` gets a real overlay only when
+  the caller explicitly declares how**, via a new `redefines:
+  dict[str, RedefinesDispatch]` parameter on `generate_go_decoder()` —
+  never inferred, since bare COBOL `REDEFINES` syntax doesn't itself
+  name a discriminator the way `variants/config.py`'s own JSON config
+  does for a whole-record variant. A `RedefinesDispatch` names a
+  sibling discriminator field and a value→variant-name rule list;
+  `generate_go_decoder()` then emits a marker interface (one method,
+  e.g. `isCardDataOverlay()`), every named view's struct implementing
+  it, and one dispatcher method (named after the target) that decodes
+  the discriminator and type-switches to the active view's struct,
+  sharing the target's own `r.buf` unchanged (`REDEFINES` shares bytes,
+  it doesn't reslice) — this is `ADR 0009`'s own named Go mechanism,
+  "interface+type-switch." Scoped narrowly: the target and every
+  overlaid field named in a rule must be a group (a leaf-level overlay
+  is a different, simpler shape left for later); the discriminator must
+  be a direct sibling of the target, a single elementary non-`OCCURS`
+  field (the same restriction `variants/config.py`'s own
+  `validate_variant_config` places on its own discriminator); and
+  `REDEFINES` combined with `OCCURS`, on the target, a sibling, or the
+  discriminator, still isn't supported. A `REDEFINES` field with no
+  `redefines` entry for its target still raises exactly as before this
+  parameter existed. `unbolt.decoding`'s own `decode_record()` is
+  unaffected by any of this — it still decodes every overlaid view
+  independently side by side (Phase 8's own, separately-scoped
+  behavior); only `generate_go_decoder()` picks one. It raises
+  `UnsupportedDecodeError` (never guesses) for: more than one DSL root;
+  a scalar (non-group) root; `REDEFINES` with no dispatch configured
+  for its target (checked before `OCCURS` is ever considered); edited/
+  national fields; `COMP-1`/`COMP-2` (float); `big.Int` on a binary
+  field; and any other resolved Go type outside the plain
+  `int8`..`int64`/`uint8`..`uint64`/`big.Int` set (`string` as a forced
+  override onto a non-alphanumeric field, a forced `float32`/`float64`
+  override). `emit="decoder"` only supports `target="go"` — there is no
+  Java flyweight decoder generator yet. Verified with real round-trips,
+  not just compile checks: `tools/compile_check` builds and **runs**
+  eight generated decoders (flat `DISPLAY`-only; a synthetic
+  `DISPLAY`+`COMP-3`+binary record; the real `nested_groups.cpy`
+  fixture, two levels deep; a synthetic record covering all three
+  non-default sign placements; a synthetic record covering `big.Int`
+  across every supported usage/sign placement; a synthetic record
+  covering plain alphanumeric decode; the real `occurs_table.cpy`
+  fixture, a leaf `OCCURS` count sibling to a group `OCCURS`, including
+  an out-of-range index; and the real `redefines_overlay.cpy` fixture
+  dispatched by its `PAYMENT-TYPE` field, including an unmatched
+  discriminator value — no existing fixture uses any of the synthetic
+  combinations, is wide enough to need `big.Int`, or has a plain
+  `PIC X`/`A` field within this slice's scope alone) against real bytes
+  in Docker, asserting the decoded values match Python's own
+  `decode_record()` exactly (ADR 0009's stated acceptance criterion) —
+  except the `OCCURS` case, where `decode_record()` itself doesn't
+  support `OCCURS` yet (see "Record decoding" above), so its expected
+  values are instead cross-checked against the same leaf-level
+  `decode_display()`/`decode_alpha()` primitives applied by hand, per
+  occurrence.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

@@ -283,6 +283,36 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hand per occurrence, rather than against `decode_record()` as a
   whole. 4 new tests (net, after retiring two now-obsolete "OCCURS
   isn't supported" tests and adding six real ones).
+- Phase 10, eighth slice: `REDEFINES` as a real overlay for the Go
+  flyweight decoder (ADR 0009's own promise). Phase 9's
+  `select_variant()` couldn't be reused directly - it dispatches across
+  separate whole copybooks, not siblings within one record - so this
+  ships a new, smaller, purpose-built `redefines:
+  dict[str, RedefinesDispatch]` parameter on `generate_go_decoder()`
+  (library-only for now, same sequencing Phase 9 itself used). For each
+  configured target, the generator emits every named view's struct
+  (including REDEFINES siblings, which previously never got rendered
+  at all), a marker interface (one unexported method, e.g.
+  `isCardDataOverlay()`), and one dispatcher method - named after the
+  target, replacing what would have been its own plain accessor - that
+  decodes a sibling discriminator and type-switches to the active
+  view, sharing the target's own `r.buf` unchanged. This is ADR 0009's
+  own named mechanism, "interface+type-switch." Scoped to group-level
+  overlays only (leaf-level is a different, simpler shape, left for
+  later); the discriminator must be a direct sibling, a single
+  elementary non-`OCCURS` field; `REDEFINES` combined with `OCCURS`
+  still isn't supported. A numeric discriminator's rule values are
+  normalized to canonical decimal literals before being emitted as Go
+  `case` labels, to avoid Go's leading-zero-means-octal literal syntax.
+  A `REDEFINES` field with no `redefines` entry for its target still
+  raises exactly as before. `tools/compile_check` gained an eighth real
+  round-trip: the real `redefines_overlay.cpy` fixture dispatched by
+  its own `PAYMENT-TYPE` field, including an unmatched discriminator
+  value - cross-checked against `decode_record()` directly, which
+  already decodes both overlaid views independently (picking which one
+  is "active" is exactly the new behavior only the Go side has now).
+  9 new tests (net - a clean addition, no existing tests needed
+  changes).
 
 ## [0.1.1] - Released 2026-10-25
 

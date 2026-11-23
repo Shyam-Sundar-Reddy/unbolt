@@ -2,7 +2,11 @@ import pytest
 
 from unbolt.dsl import build_dsl
 from unbolt.exceptions import UnsupportedDecodeError
-from unbolt.generators.go_decoder import generate_go_decoder
+from unbolt.generators.go_decoder import (
+    RedefinesDispatch,
+    RedefinesRule,
+    generate_go_decoder,
+)
 from unbolt.generators.resolve import resolve_mapping
 from unbolt.mapping import recommend_mappings
 from unbolt.overrides import Overrides, apply_override
@@ -98,6 +102,126 @@ def test_leaf_occurs_on_big_int_field_gains_a_bounds_check() -> None:
 def test_redefines_field_is_unsupported() -> None:
     with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
         _generate("01 REC.\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).")
+
+
+def _generate_with_redefines(source: str, redefines: dict[str, RedefinesDispatch]) -> str:
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    resolved = resolve_mapping(recommend_mappings(dsl, "go"), Overrides())
+    return generate_go_decoder(dsl, resolved, redefines=redefines)
+
+
+def test_redefines_dispatch_emits_a_marker_interface_and_a_dispatcher() -> None:
+    with open("fixtures/redefines_overlay.cpy") as f:
+        source = f.read()
+    out = _generate_with_redefines(
+        source,
+        {
+            "CARD-DATA": RedefinesDispatch(
+                discriminator="PAYMENT-TYPE",
+                rules=(
+                    RedefinesRule(value="C", variant="CARD-DATA"),
+                    RedefinesRule(value="K", variant="CHECK-DATA"),
+                ),
+            ),
+        },
+    )
+    assert "type CardDataOverlay interface {\n\tisCardDataOverlay()\n}" in out
+    assert "func (CardData) isCardDataOverlay() {}" in out
+    assert "func (CheckData) isCardDataOverlay() {}" in out
+    assert "func (r *CheckData) CheckNumber() (int64, error) {" in out
+    assert "func (r *PaymentRecord) CardData() (CardDataOverlay, error) {" in out
+    assert "discriminator := r.PaymentType()" in out
+    assert "case \"C\":\n\t\treturn CardData{buf: r.buf}, nil" in out
+    assert "case \"K\":\n\t\treturn CheckData{buf: r.buf}, nil" in out
+    assert (
+        'return nil, fmt.Errorf("CardData: discriminator %v matches no configured variant", '
+        "discriminator)" in out
+    )
+    # CheckData is reachable only through the dispatcher, never as its
+    # own accessor on PaymentRecord.
+    assert "func (r *PaymentRecord) CheckData()" not in out
+
+
+def test_redefines_dispatch_with_numeric_discriminator_uses_a_bare_literal() -> None:
+    out = _generate_with_redefines(
+        "01 REC.\n  05 REC-TYPE PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+        "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+        {
+            "A": RedefinesDispatch(
+                discriminator="REC-TYPE",
+                rules=(
+                    RedefinesRule(value="1", variant="A"),
+                    RedefinesRule(value="2", variant="B"),
+                ),
+            ),
+        },
+    )
+    assert "discriminator, err := r.RecType()" in out
+    assert "if err != nil {\n\t\treturn nil, err\n\t}" in out
+    assert "case 1:\n\t\treturn A{buf: r.buf}, nil" in out
+    assert "case 2:\n\t\treturn B{buf: r.buf}, nil" in out
+
+
+def test_redefines_dispatch_leaf_target_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="requires a group"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_leaf_sibling_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="requires a group"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_combined_with_occurs_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="combined with OCCURS"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A OCCURS 2 TIMES.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(6).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_unknown_rule_variant_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="neither the target nor"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "ZZZ")))},
+        )
+
+
+def test_redefines_dispatch_discriminator_not_a_sibling_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="isn't a sibling field"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("NOPE", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_group_discriminator_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="single elementary"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T.\n    10 Z PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_invalid_numeric_rule_value_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="isn't a valid integer"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("abc", "A"), RedefinesRule("2", "B")))},
+        )
 
 
 def test_nested_group_gets_its_own_struct_and_accessor() -> None:

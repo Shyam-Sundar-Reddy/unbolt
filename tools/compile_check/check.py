@@ -18,7 +18,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from unbolt.dsl import build_dsl  # noqa: E402
 from unbolt.generators.go import generate_go  # noqa: E402
-from unbolt.generators.go_decoder import generate_go_decoder  # noqa: E402
+from unbolt.generators.go_decoder import (  # noqa: E402
+    RedefinesDispatch,
+    RedefinesRule,
+    generate_go_decoder,
+)
 from unbolt.generators.java import generate_java  # noqa: E402
 from unbolt.generators.resolve import resolve_mapping  # noqa: E402
 from unbolt.mapping import recommend_mappings  # noqa: E402
@@ -350,6 +354,97 @@ func main() {
 """
 
 
+# REDEFINES overlay dispatch (Phase 10, eighth slice): the real
+# redefines_overlay.cpy fixture, dispatched by PAYMENT-TYPE. Two full
+# records (one "C", one "K") plus a third with an unmatched
+# discriminator. decode_record() already decodes both overlaid views
+# independently for a given byte string (it doesn't pick one), so the
+# expected field values were cross-checked against it directly - same
+# discipline as every other case, just confirming both interpretations
+# decode cleanly, since picking which one is "active" is exactly the
+# new behavior this slice adds and decode_record() doesn't have it.
+_REDEFINES_DISPATCH = {
+    "CARD-DATA": RedefinesDispatch(
+        discriminator="PAYMENT-TYPE",
+        rules=(
+            RedefinesRule(value="C", variant="CARD-DATA"),
+            RedefinesRule(value="K", variant="CHECK-DATA"),
+        ),
+    ),
+}
+
+_REDEFINES_GO_MAIN = """package main
+
+import "fmt"
+
+func main() {
+	cardData := []byte{
+		0xC3, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF1, 0xF2, 0xF2, 0xF5,
+	}
+	checkData := []byte{
+		0xD2, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+	}
+	unknownData := []byte{
+		0xE7, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xF0,
+		0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF1, 0xF2, 0xF2, 0xF5,
+	}
+
+	rCard, err := NewPaymentRecord(cardData)
+	if err != nil {
+		panic(err)
+	}
+	overlay, err := rCard.CardData()
+	if err != nil {
+		panic(err)
+	}
+	card, ok := overlay.(CardData)
+	if !ok {
+		panic(fmt.Sprintf("CardData(): got %T, want CardData", overlay))
+	}
+	if v := card.CardNumber(); v != "1234567890123456" {
+		panic(fmt.Sprintf("CardNumber: got %q, want %q", v, "1234567890123456"))
+	}
+	if v, err := card.CardExp(); err != nil || v != 1225 {
+		panic(fmt.Sprintf("CardExp: got (%v, %v), want (1225, nil)", v, err))
+	}
+
+	rCheck, err := NewPaymentRecord(checkData)
+	if err != nil {
+		panic(err)
+	}
+	overlay, err = rCheck.CardData()
+	if err != nil {
+		panic(err)
+	}
+	check, ok := overlay.(CheckData)
+	if !ok {
+		panic(fmt.Sprintf("CardData(): got %T, want CheckData", overlay))
+	}
+	if v, err := check.CheckNumber(); err != nil || v != 1234567890 {
+		panic(fmt.Sprintf("CheckNumber: got (%v, %v), want (1234567890, nil)", v, err))
+	}
+	if v, err := check.BankRouting(); err != nil || v != 123456789 {
+		panic(fmt.Sprintf("BankRouting: got (%v, %v), want (123456789, nil)", v, err))
+	}
+
+	rUnknown, err := NewPaymentRecord(unknownData)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := rUnknown.CardData(); err == nil {
+		panic("CardData() with an unmatched discriminator: want an error, got nil")
+	}
+
+	fmt.Println("REDEFINES dispatch Go decoder round-trip: OK")
+}
+"""
+
+
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
         return Overrides()
@@ -404,11 +499,17 @@ def _run_docker(image: str, work_dir: pathlib.Path, command: str) -> tuple[bool,
 
 
 def _check_go_decoder_roundtrip(
-    out_dir: pathlib.Path, label: str, source: str, go_main: str
+    out_dir: pathlib.Path,
+    label: str,
+    source: str,
+    go_main: str,
+    redefines: dict[str, RedefinesDispatch] | None = None,
 ) -> bool:
     dsl = build_dsl(parse_copybook(source), source_file=f"{label}.cpy")
     resolved = resolve_mapping(recommend_mappings(dsl, "go"), Overrides())
-    decoder_src = generate_go_decoder(dsl, resolved).replace("package generated", "package main", 1)
+    decoder_src = generate_go_decoder(dsl, resolved, redefines=redefines).replace(
+        "package generated", "package main", 1
+    )
 
     work_dir = out_dir / f"go_decoder_{label}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -475,7 +576,7 @@ def main() -> int:
     # not just compiles - the running binary must decode to the exact
     # values Python's own decode_record() already verified (except the
     # OCCURS case below, where decode_record() itself doesn't support
-    # OCCURS yet - see its own comment). Seven cases: flat_display.cpy
+    # OCCURS yet - see its own comment). Eight cases: flat_display.cpy
     # (DISPLAY only), a synthetic DISPLAY+COMP-3+binary record (no
     # existing fixture combines those three within this slice's scope,
     # since mixed_usage.cpy also has COMP-1/COMP-2, which isn't
@@ -485,9 +586,11 @@ def main() -> int:
     # across every supported usage/sign placement (no fixture has a
     # field wide enough to need it), a synthetic record covering plain
     # alphanumeric decode (no fixture has a PIC X/A field within this
-    # slice's scope alone), and occurs_table.cpy (leaf OCCURS count
-    # sibling to a group OCCURS, exercising the indexed-accessor/reslice
-    # mechanism end to end, including an out-of-range index).
+    # slice's scope alone), occurs_table.cpy (leaf OCCURS count sibling
+    # to a group OCCURS, exercising the indexed-accessor/reslice
+    # mechanism end to end, including an out-of-range index), and
+    # redefines_overlay.cpy (REDEFINES overlay dispatch: one record per
+    # discriminator value, plus an unmatched one).
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "flat_display", (FIXTURES_DIR / "flat_display.cpy").read_text(),
         _FLAT_DISPLAY_GO_MAIN,
@@ -510,6 +613,10 @@ def main() -> int:
     )
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "occurs", (FIXTURES_DIR / "occurs_table.cpy").read_text(), _OCCURS_GO_MAIN,
+    )
+    ok = ok and _check_go_decoder_roundtrip(
+        out_dir, "redefines", (FIXTURES_DIR / "redefines_overlay.cpy").read_text(),
+        _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
     shutil.rmtree(out_dir)
