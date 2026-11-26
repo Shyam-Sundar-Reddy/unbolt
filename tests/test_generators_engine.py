@@ -53,10 +53,17 @@ def test_emit_decoder_returns_gen_decoder_go() -> None:
     assert "func (r *Rec) Age() (int16, error) {" in files["gen_decoder.go"]
 
 
-def test_emit_decoder_rejects_java_target() -> None:
+def test_emit_decoder_returns_one_java_decoder_file_per_class() -> None:
     dsl = _dsl("01 REC.\n    05 AGE PIC S9(3).")
-    with pytest.raises(UnsupportedDecodeError, match="only supports target='go'"):
-        generate_code(dsl, recommend_mappings(dsl, "java"), "java", emit="decoder")
+    files = generate_code(dsl, recommend_mappings(dsl, "java"), "java", emit="decoder")
+    assert set(files) == {"Rec.java"}
+    assert "public short getAge() {" in files["Rec.java"]
+
+
+def test_emit_decoder_rejects_unknown_target() -> None:
+    dsl = _dsl("01 REC.\n    05 AGE PIC S9(3).")
+    with pytest.raises(UnknownTargetError):
+        generate_code(dsl, recommend_mappings(dsl, "go"), "rust", emit="decoder")
 
 
 def test_emit_decoder_propagates_out_of_scope_errors() -> None:

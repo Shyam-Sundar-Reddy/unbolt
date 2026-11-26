@@ -185,11 +185,11 @@ dropped — never silently misconverted:
   field; and any other resolved Go type outside the plain
   `int8`..`int64`/`uint8`..`uint64`/`big.Int` set (`string` as a forced
   override onto a non-alphanumeric field, a forced `float32`/`float64`
-  override). `emit="decoder"` only supports `target="go"` — there is no
-  Java flyweight decoder generator yet. Verified with real round-trips,
-  not just compile checks: `tools/compile_check` builds and **runs**
-  eight generated decoders (flat `DISPLAY`-only; a synthetic
-  `DISPLAY`+`COMP-3`+binary record; the real `nested_groups.cpy`
+  override). `emit="decoder"` with `target="java"` now exists too, but
+  covers far less — see its own bullet below. Verified with real
+  round-trips, not just compile checks: `tools/compile_check` builds
+  and **runs** eight generated Go decoders (flat `DISPLAY`-only; a
+  synthetic `DISPLAY`+`COMP-3`+binary record; the real `nested_groups.cpy`
   fixture, two levels deep; a synthetic record covering all three
   non-default sign placements; a synthetic record covering `big.Int`
   across every supported usage/sign placement; a synthetic record
@@ -207,6 +207,36 @@ dropped — never silently misconverted:
   values are instead cross-checked against the same leaf-level
   `decode_display()`/`decode_alpha()` primitives applied by hand, per
   occurrence.
+- **Java flyweight decoder (`emit="decoder"`, `target="java"`, ADR
+  0009, Phase 10) covers flat, unsigned/signed-trailing-overpunch
+  `DISPLAY` records only — far narrower than the Go decoder's eight
+  slices.** `generate_java_decoder()` emits one public class per DSL
+  root (Java allows only one public top-level type per file, the same
+  reason `generate_java()` already returns `dict[str, str]` rather
+  than one blob — reused unchanged), each wrapping a
+  `java.nio.ByteBuffer` and reading via its absolute indexed getters
+  (`get(int)`), which default to big-endian — COBOL's own convention —
+  so, unlike the Go decoder's `[]byte` slices, nothing here has ever
+  needed to reslice a buffer. Decode errors throw
+  `java.lang.IllegalArgumentException` (unchecked), reusing
+  `generate_java()`'s own precedent for its range validators rather
+  than a new checked-exception type. Not yet supported — each raises
+  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
+  root; `OCCURS`; `REDEFINES`; nested groups; `COMP-1`/`COMP-2`;
+  `COMP-3`/`PACKED-DECIMAL`; `COMP`/`COMP-4`/`COMP-5`/`BINARY`; `SIGN
+  IS SEPARATE`/`LEADING`; alphanumeric/edited/national fields; and any
+  resolved Java type outside the plain `byte`/`short`/`int`/`long`
+  ladder — `BigInteger` (the ladder's own next step up), `BigDecimal`
+  (every decimal/scaled field's resolved type for Java — no analogue
+  to Go's scaled-`int64` marker exists here, so this is a different,
+  still-open design question, not a mechanical lift), and `String`
+  (a forced override). Verified with a real round-trip, not just a
+  compile check: `tools/compile_check` builds, **runs**, and asserts
+  decoded values from one generated decoder (a synthetic flat
+  `DISPLAY`-only record reusing `flat_display.cpy`'s own two integer
+  fields, minus its decimal `ACCOUNT-BALANCE` field, which is out of
+  this slice's scope) inside a real JVM (`eclipse-temurin:21-jdk`),
+  cross-checked against Python's own `decode_record()` first.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

@@ -14,10 +14,11 @@ over a byte buffer - a new, separate artifact, not a replacement).
 from typing import Literal
 
 from unbolt.dsl.schema import Dsl
-from unbolt.exceptions import UnknownTargetError, UnsupportedDecodeError
+from unbolt.exceptions import UnknownTargetError
 from unbolt.generators.go import generate_go
 from unbolt.generators.go_decoder import generate_go_decoder
 from unbolt.generators.java import generate_java
+from unbolt.generators.java_decoder import generate_java_decoder
 from unbolt.generators.resolve import resolve_mapping
 from unbolt.mapping.model import MappingReport
 from unbolt.overrides import Overrides
@@ -43,18 +44,21 @@ def generate_code(
         UnknownTargetError: target isn't "go" or "java".
         UnapprovedMappingError: a field has no override and no valid
             candidate (propagated from resolve_mapping).
-        UnsupportedDecodeError: emit="decoder" and either target="java"
-            (no Java decoder generator yet) or the DSL/a field is
-            outside the Go decoder's current slice (see
-            generators.go_decoder's module docstring).
+        UnsupportedDecodeError: emit="decoder" and the DSL/a field is
+            outside the chosen target's decoder's current slice (see
+            generators.go_decoder's/generators.java_decoder's own
+            module docstrings).
     """
     resolved = resolve_mapping(mapping, overrides if overrides is not None else Overrides())
     if emit == "decoder":
-        if target != "go":
-            raise UnsupportedDecodeError(
-                f"emit='decoder' only supports target='go' so far, got {target!r}"
-            )
-        return {"gen_decoder.go": generate_go_decoder(dsl, resolved)}
+        if target == "go":
+            return {"gen_decoder.go": generate_go_decoder(dsl, resolved)}
+        if target == "java":
+            return {
+                f"{name}.java": src
+                for name, src in generate_java_decoder(dsl, resolved).items()
+            }
+        raise UnknownTargetError(f"unknown target {target!r}; expected 'go' or 'java'")
     if target == "go":
         return {"gen.go": generate_go(dsl, resolved)}
     if target == "java":

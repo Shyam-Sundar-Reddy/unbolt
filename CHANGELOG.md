@@ -313,6 +313,32 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is "active" is exactly the new behavior only the Go side has now).
   9 new tests (net - a clean addition, no existing tests needed
   changes).
+- Phase 10, ninth slice: the Java flyweight decoder starts
+  (`generators/java_decoder.py`), scoped as narrowly as the Go
+  decoder's own first slice was - one public class per DSL root (Java
+  allows only one public top-level type per file, matching
+  `generate_java()`'s own `dict[str, str]` return shape), flat records
+  only, `DISPLAY` fields only (unsigned + signed trailing overpunch),
+  and only `byte`/`short`/`int`/`long`. Each class wraps a
+  `java.nio.ByteBuffer`, reading via its absolute indexed getters
+  (`get(int)`, big-endian by default - COBOL's own convention), so
+  this slice never needs Go's own buffer-reslicing scheme. Decode
+  errors throw `java.lang.IllegalArgumentException` (unchecked),
+  reusing `generate_java()`'s own precedent for its range validators.
+  Java's integer ladder has no unsigned types and no "scaled-int64"
+  marker - a decimal/scaled field resolves straight to `"BigDecimal"`
+  for Java, a structurally heavier type excluded from this slice on
+  purpose rather than forced through Go's own int-ladder shortcut.
+  `generate_code(..., emit="decoder")` now routes `target="java"` to
+  this generator instead of raising; an unknown `target` under
+  `emit="decoder"` now raises `UnknownTargetError`, matching
+  `emit="types"`'s own behavior, replacing the old blanket "only
+  supports target='go'" message. `tools/compile_check` gained a first
+  Java decoder round-trip, built and actually run (not just compiled)
+  inside a real `eclipse-temurin:21-jdk` JVM, reusing `flat_display.cpy`'s
+  own two integer fields and their already-verified bytes. 19 new tests
+  (`tests/test_generators_java_decoder.py`,
+  `tests/test_generators_engine.py`).
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -24,6 +24,7 @@ from unbolt.generators.go_decoder import (  # noqa: E402
     generate_go_decoder,
 )
 from unbolt.generators.java import generate_java  # noqa: E402
+from unbolt.generators.java_decoder import generate_java_decoder  # noqa: E402
 from unbolt.generators.resolve import resolve_mapping  # noqa: E402
 from unbolt.mapping import recommend_mappings  # noqa: E402
 from unbolt.overrides import Overrides, apply_override  # noqa: E402
@@ -445,6 +446,61 @@ func main() {
 """
 
 
+# Java flyweight decoder (Phase 10, ninth slice), first slice: flat
+# DISPLAY-only - the same two leading fields flat_display.cpy itself
+# uses, minus ACCOUNT-BALANCE (a decimal field, which resolves to
+# BigDecimal for Java and is out of this slice's scope). Same bytes
+# the Go round-trip above already cross-checked against
+# decode_record() for these two fields - reused directly rather than
+# re-derived.
+_JAVA_FLAT_DISPLAY_SOURCE = """01 CUSTOMER-RECORD.
+    05 CUSTOMER-ID PIC 9(6).
+    05 CUSTOMER-AGE PIC S9(3).
+"""
+
+_JAVA_FLAT_DISPLAY_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5, (byte) 0xF6,
+\t\t\t(byte) 0xF0, (byte) 0xF4, (byte) 0xD5,
+\t\t};
+\t\tCustomerRecord r = new CustomerRecord(ByteBuffer.wrap(data));
+\t\tint id = r.getCustomerId();
+\t\tif (id != 123456) {
+\t\t\tthrow new RuntimeException("CustomerId: got " + id + ", want 123456");
+\t\t}
+\t\tshort age = r.getCustomerAge();
+\t\tif (age != -45) {
+\t\t\tthrow new RuntimeException("CustomerAge: got " + age + ", want -45");
+\t\t}
+\t\tSystem.out.println("flat_display Java decoder round-trip: OK");
+\t}
+}
+"""
+
+
+def _check_java_decoder_roundtrip(
+    out_dir: pathlib.Path, label: str, source: str, java_main: str
+) -> bool:
+    dsl = build_dsl(parse_copybook(source), source_file=f"{label}.cpy")
+    resolved = resolve_mapping(recommend_mappings(dsl, "java"), Overrides())
+    classes = generate_java_decoder(dsl, resolved)
+
+    work_dir = out_dir / f"java_decoder_{label}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    for class_name, src in classes.items():
+        (work_dir / f"{class_name}.java").write_text(src)
+    (work_dir / "Main.java").write_text(java_main)
+
+    passed, output = _run_docker("eclipse-temurin:21-jdk", work_dir, "javac *.java && java Main")
+    print(f"Java decoder round-trip ({label}):", "OK" if passed else f"FAILED\n{output}")
+    if passed:
+        print(output.strip())
+    return passed
+
+
 def _overrides_for(name: str) -> Overrides:
     if name != "mixed_usage":
         return Overrides()
@@ -617,6 +673,17 @@ def main() -> int:
     ok = ok and _check_go_decoder_roundtrip(
         out_dir, "redefines", (FIXTURES_DIR / "redefines_overlay.cpy").read_text(),
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
+    )
+
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth slice): same
+    # real round-trip discipline as the Go decoder above - the running
+    # binary must decode to the exact values Python's own
+    # decode_record() already verified. First case only so far: a
+    # synthetic flat DISPLAY-only record (flat_display.cpy's own two
+    # integer fields, minus its decimal ACCOUNT-BALANCE field, which is
+    # out of this slice's scope).
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
 
     shutil.rmtree(out_dir)
