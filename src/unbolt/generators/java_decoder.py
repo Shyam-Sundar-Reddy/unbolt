@@ -309,12 +309,14 @@ def _render_leaf_accessor(
     elif is_binary_usage(node.usage):
         body = _binary_body(start, node.byte_size, node.signed, java_type)
     elif node.usage.upper() == "DISPLAY":
-        if node.sign_separate or node.sign_leading:
-            raise UnsupportedDecodeError(
-                f"java decoder: SIGN IS SEPARATE/LEADING on {node.name!r} isn't supported yet"
-            )
         if not node.signed:
             body = _unsigned_display_body(node.name, start, end, java_type)
+        elif node.sign_separate:
+            body = _separate_sign_display_body(
+                node.name, start, end, node.sign_leading, java_type
+            )
+        elif node.sign_leading:
+            body = _leading_overpunch_display_body(node.name, start, end, java_type)
         else:
             body = _signed_display_body(node.name, start, end, java_type)
     else:
@@ -373,6 +375,70 @@ def _signed_display_body(field_label: str, start: int, end: int, java_type: str)
         'String.format("0x%02X", zone));\n'
         "    }\n"
         f"    return ({java_type}) v;\n"
+    )
+
+
+def _leading_overpunch_display_body(field_label: str, start: int, end: int, java_type: str) -> str:
+    return (
+        f"    int first = buf.get({start}) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    long v = digit;\n"
+        f"    for (int i = {start + 1}; i < {end}; i++) {{\n"
+        "        int b = buf.get(i) & 0xFF;\n"
+        "        if (b < 0xF0 || b > 0xF9) {\n"
+        f'            throw new IllegalArgumentException("{field_label}: byte " + '
+        'String.format("0x%02X", b) + " is not a DISPLAY digit");\n'
+        "        }\n"
+        "        v = v * 10 + (b & 0x0F);\n"
+        "    }\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = -v;\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return ({java_type}) v;\n"
+    )
+
+
+def _separate_sign_display_body(
+    field_label: str, start: int, end: int, sign_leading: bool, java_type: str
+) -> str:
+    if sign_leading:
+        sign_pos, digits_start, digits_end = start, start + 1, end
+    else:
+        sign_pos, digits_start, digits_end = end - 1, start, end - 1
+    return (
+        f"    int sign = buf.get({sign_pos}) & 0xFF;\n"
+        "    long v = 0;\n"
+        f"    for (int i = {digits_start}; i < {digits_end}; i++) {{\n"
+        "        int b = buf.get(i) & 0xFF;\n"
+        "        if (b < 0xF0 || b > 0xF9) {\n"
+        f'            throw new IllegalArgumentException("{field_label}: byte " + '
+        'String.format("0x%02X", b) + " is not a DISPLAY digit");\n'
+        "        }\n"
+        "        v = v * 10 + (b & 0x0F);\n"
+        "    }\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        f"            return ({java_type}) v;\n"
+        "        case 0x60:\n"
+        f"            return ({java_type}) (-v);\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
     )
 
 

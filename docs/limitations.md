@@ -218,9 +218,10 @@ dropped — never silently misconverted:
   `getShort`/`getInt`/`getLong(int)` for binary fields), which default
   to big-endian — COBOL's own convention — so, unlike the Go decoder's
   `[]byte` slices, nothing here has ever needed to reslice a buffer.
-  `DISPLAY` (unsigned + signed trailing overpunch — no `SIGN IS
-  SEPARATE`/`LEADING` yet) works the same way the Go decoder's own
-  first slice did; `COMP-3`/`PACKED-DECIMAL` via a private static
+  `DISPLAY` (unsigned, and signed via trailing/leading overpunch or
+  trailing/leading `SIGN IS SEPARATE`) works the same way the Go
+  decoder's own fourth slice did; `COMP-3`/`PACKED-DECIMAL` via a
+  private static
   `decodePackedDecimal()` helper (emitted once per class, only when
   needed — a direct, duplicated-per-nibble port of Go's own
   `decodePackedDecimal`, since Java has no free functions to share it
@@ -256,23 +257,24 @@ dropped — never silently misconverted:
   codegen time, so there's nothing to track at runtime). Not yet
   supported — each raises `UnsupportedDecodeError` rather than
   guessing: a scalar (non-group) root; `OCCURS`; `REDEFINES`;
-  `COMP-1`/`COMP-2`; `SIGN IS SEPARATE`/`LEADING`; alphanumeric/edited/
-  national fields; and any resolved Java type outside the plain
-  `byte`/`short`/`int`/`long` ladder — `BigInteger` (the ladder's own
-  next step up), `BigDecimal` (every decimal/scaled field's resolved
-  type for Java — no analogue to Go's scaled-`int64` marker exists
-  here, so this is a different, still-open design question, not a
-  mechanical lift), and `String` (a forced override). Verified with
-  real round-trips, not just compile checks: `tools/compile_check`
-  builds, **runs**, and asserts decoded values from three generated
-  decoders (a synthetic flat `DISPLAY`-only record reusing
-  `flat_display.cpy`'s own two integer fields, minus its decimal
-  `ACCOUNT-BALANCE` field, which is out of this slice's scope; a
-  synthetic `DISPLAY`+`COMP-3`+binary record including that unsigned
-  8-byte `BINARY` field; and a synthetic record mirroring
-  `nested_groups.cpy` two levels deep) inside a real JVM
-  (`eclipse-temurin:21-jdk`), cross-checked against Python's own
-  `decode_record()` first.
+  `COMP-1`/`COMP-2`; alphanumeric/edited/national fields; and any
+  resolved Java type outside the plain `byte`/`short`/`int`/`long`
+  ladder — `BigInteger` (the ladder's own next step up), `BigDecimal`
+  (every decimal/scaled field's resolved type for Java — no analogue
+  to Go's scaled-`int64` marker exists here, so this is a different,
+  still-open design question, not a mechanical lift), and `String`
+  (a forced override). Verified with real round-trips, not just
+  compile checks: `tools/compile_check` builds, **runs**, and asserts
+  decoded values from four generated decoders (a synthetic flat
+  `DISPLAY`-only record reusing `flat_display.cpy`'s own two integer
+  fields, minus its decimal `ACCOUNT-BALANCE` field, which is out of
+  this slice's scope; a synthetic `DISPLAY`+`COMP-3`+binary record
+  including that unsigned 8-byte `BINARY` field; a synthetic record
+  mirroring `nested_groups.cpy` two levels deep; and a synthetic
+  record covering all three non-default sign placements, reusing the
+  Go decoder's own `sign_placements` source and bytes directly) inside
+  a real JVM (`eclipse-temurin:21-jdk`), cross-checked against
+  Python's own `decode_record()` first.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

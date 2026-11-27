@@ -177,14 +177,28 @@ def test_non_display_non_packed_non_binary_usage_is_unsupported() -> None:
         generate_java_decoder(dsl, resolved)
 
 
-def test_sign_separate_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="SIGN IS SEPARATE/LEADING"):
-        _generate("01 REC.\n  05 A PIC S9(3) SIGN IS SEPARATE.")
+def test_leading_overpunch_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING.")["Rec"]
+    assert "public short getA() {" in out
+    assert "int first = buf.get(0) & 0xFF;" in out
+    assert "for (int i = 1; i < 3; i++) {" in out
+    assert "case 0xD0:" in out
 
 
-def test_sign_leading_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="SIGN IS SEPARATE/LEADING"):
-        _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING.")
+def test_trailing_separate_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS SEPARATE.")["Rec"]
+    assert "public short getA() {" in out
+    assert "int sign = buf.get(3) & 0xFF;" in out
+    assert "for (int i = 0; i < 3; i++) {" in out
+    assert "case 0x4E:" in out
+    assert "case 0x60:" in out
+
+
+def test_leading_separate_sign_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS LEADING SEPARATE.")["Rec"]
+    assert "public short getA() {" in out
+    assert "int sign = buf.get(0) & 0xFF;" in out
+    assert "for (int i = 1; i < 4; i++) {" in out
 
 
 def test_big_integer_resolved_type_is_unsupported() -> None:

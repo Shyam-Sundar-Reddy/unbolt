@@ -576,6 +576,34 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, fourth slice: all three non-default sign
+# placements - reuses _SIGN_PLACEMENTS_SOURCE and its already-verified
+# bytes directly, the same source and values the Go decoder's own
+# sign-placements round-trip already uses above.
+_JAVA_SIGN_PLACEMENTS_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xD1, (byte) 0xF2, (byte) 0xF3,
+\t\t\t(byte) 0xF4, (byte) 0xF5, (byte) 0xF6, (byte) 0x60,
+\t\t\t(byte) 0x60, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9,
+\t\t};
+\t\tRec r = new Rec(ByteBuffer.wrap(data));
+\t\tif (r.getLeadOvp() != -123) {
+\t\t\tthrow new RuntimeException("LeadOvp: got " + r.getLeadOvp());
+\t\t}
+\t\tif (r.getTrailSep() != -456) {
+\t\t\tthrow new RuntimeException("TrailSep: got " + r.getTrailSep());
+\t\t}
+\t\tif (r.getLeadSep() != -789) {
+\t\t\tthrow new RuntimeException("LeadSep: got " + r.getLeadSep());
+\t\t}
+\t\tSystem.out.println("sign_placements Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
@@ -771,15 +799,18 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth/tenth/eleventh
-    # slices): same real round-trip discipline as the Go decoder above
-    # - the running binary must decode to the exact values Python's
-    # own decode_record() already verified. Three cases: a synthetic
-    # flat DISPLAY-only record (flat_display.cpy's own two integer
-    # fields, minus its decimal ACCOUNT-BALANCE field, out of scope),
-    # a synthetic DISPLAY+COMP-3+binary record including an unsigned
-    # 8-byte BINARY field, and a synthetic record mirroring
-    # nested_groups.cpy two levels deep.
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth-twelfth slices):
+    # same real round-trip discipline as the Go decoder above - the
+    # running binary must decode to the exact values Python's own
+    # decode_record() already verified. Four cases: a synthetic flat
+    # DISPLAY-only record (flat_display.cpy's own two integer fields,
+    # minus its decimal ACCOUNT-BALANCE field, out of scope), a
+    # synthetic DISPLAY+COMP-3+binary record including an unsigned
+    # 8-byte BINARY field, a synthetic record mirroring
+    # nested_groups.cpy two levels deep, and a synthetic record
+    # covering all three non-default sign placements, reusing
+    # _SIGN_PLACEMENTS_SOURCE and its bytes directly from the Go
+    # decoder's own equivalent round-trip above.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
@@ -788,6 +819,9 @@ def main() -> int:
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "nested_groups", _JAVA_NESTED_GROUPS_SOURCE, _JAVA_NESTED_GROUPS_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "sign_placements", _SIGN_PLACEMENTS_SOURCE, _JAVA_SIGN_PLACEMENTS_MAIN,
     )
 
     shutil.rmtree(out_dir)

@@ -375,6 +375,17 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   real `eclipse-temurin:21-jdk` JVM. 3 new tests (net, after retiring
   the now-obsolete "nested group isn't supported" test and adding two
   real ones).
+- Phase 10, twelfth slice: `SIGN IS SEPARATE`/`LEADING` for the Java
+  flyweight decoder, mirroring `go_decoder.py`'s own fourth slice - no
+  new design question turned up porting it. Three body generators
+  (leading overpunch, trailing separate, leading separate) replace the
+  `DISPLAY` dispatch's old blanket rejection for these sign placements.
+  `tools/compile_check` gained a fourth Java decoder round-trip,
+  reusing the Go decoder's own `_SIGN_PLACEMENTS_SOURCE` and
+  already-verified bytes directly, built and actually run inside a
+  real `eclipse-temurin:21-jdk` JVM. 1 new test (net, after retiring
+  two now-obsolete "SIGN IS SEPARATE/LEADING isn't supported" tests
+  and adding three real ones).
 
 ## [0.1.1] - Released 2026-10-25
 
