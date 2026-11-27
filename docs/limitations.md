@@ -208,35 +208,57 @@ dropped — never silently misconverted:
   `decode_display()`/`decode_alpha()` primitives applied by hand, per
   occurrence.
 - **Java flyweight decoder (`emit="decoder"`, `target="java"`, ADR
-  0009, Phase 10) covers flat, unsigned/signed-trailing-overpunch
-  `DISPLAY` records only — far narrower than the Go decoder's eight
-  slices.** `generate_java_decoder()` emits one public class per DSL
-  root (Java allows only one public top-level type per file, the same
-  reason `generate_java()` already returns `dict[str, str]` rather
-  than one blob — reused unchanged), each wrapping a
-  `java.nio.ByteBuffer` and reading via its absolute indexed getters
-  (`get(int)`), which default to big-endian — COBOL's own convention —
-  so, unlike the Go decoder's `[]byte` slices, nothing here has ever
-  needed to reslice a buffer. Decode errors throw
+  0009, Phase 10) covers flat `DISPLAY`/`COMP-3`/binary records so
+  far — far narrower than the Go decoder's eight slices.**
+  `generate_java_decoder()` emits one public class per DSL root (Java
+  allows only one public top-level type per file, the same reason
+  `generate_java()` already returns `dict[str, str]` rather than one
+  blob — reused unchanged), each wrapping a `java.nio.ByteBuffer` and
+  reading via its absolute indexed getters (`get(int)`,
+  `getShort`/`getInt`/`getLong(int)` for binary fields), which default
+  to big-endian — COBOL's own convention — so, unlike the Go decoder's
+  `[]byte` slices, nothing here has ever needed to reslice a buffer.
+  `DISPLAY` (unsigned + signed trailing overpunch — no `SIGN IS
+  SEPARATE`/`LEADING` yet) works the same way the Go decoder's own
+  first slice did; `COMP-3`/`PACKED-DECIMAL` via a private static
+  `decodePackedDecimal()` helper (emitted once per class, only when
+  needed — a direct, duplicated-per-nibble port of Go's own
+  `decodePackedDecimal`, since Java has no free functions to share it
+  across classes); `COMP`/`COMP-4`/`COMP-5`/`BINARY` reads natively via
+  `ByteBuffer`'s own big-endian getters, with no `encoding/binary`-style
+  explicit byte-order setup the way Go needed. Java has no unsigned
+  primitives, so an unsigned binary field's resolved type widens past
+  its native read width via a mask (`& 0xFFFF` for 2 bytes widening to
+  `int`, `& 0xFFFFFFFFL` for 4 widening to `long`) — except an unsigned
+  8-byte field, which needs no mask at all: confirmed by computing both
+  numbers directly (not assumed) that its 18-digit ceiling
+  (`datatypes/sizing.py`'s own BINARY tier limit) always fits within
+  `long`'s own signed range (`999999999999999999 <
+  9223372036854775807`), so there's no wider type to widen into and
+  the native `getLong()` read is already correct — this is exactly
+  the kind of edge case a real round-trip test exists to catch, and it
+  did: an earlier version of this code raised `KeyError` on that exact
+  input before the round-trip below caught it. Decode errors throw
   `java.lang.IllegalArgumentException` (unchecked), reusing
   `generate_java()`'s own precedent for its range validators rather
   than a new checked-exception type. Not yet supported — each raises
   `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
-  root; `OCCURS`; `REDEFINES`; nested groups; `COMP-1`/`COMP-2`;
-  `COMP-3`/`PACKED-DECIMAL`; `COMP`/`COMP-4`/`COMP-5`/`BINARY`; `SIGN
+  root; `OCCURS`; `REDEFINES`; nested groups; `COMP-1`/`COMP-2`; `SIGN
   IS SEPARATE`/`LEADING`; alphanumeric/edited/national fields; and any
   resolved Java type outside the plain `byte`/`short`/`int`/`long`
   ladder — `BigInteger` (the ladder's own next step up), `BigDecimal`
   (every decimal/scaled field's resolved type for Java — no analogue
   to Go's scaled-`int64` marker exists here, so this is a different,
   still-open design question, not a mechanical lift), and `String`
-  (a forced override). Verified with a real round-trip, not just a
-  compile check: `tools/compile_check` builds, **runs**, and asserts
-  decoded values from one generated decoder (a synthetic flat
+  (a forced override). Verified with real round-trips, not just
+  compile checks: `tools/compile_check` builds, **runs**, and asserts
+  decoded values from two generated decoders (a synthetic flat
   `DISPLAY`-only record reusing `flat_display.cpy`'s own two integer
   fields, minus its decimal `ACCOUNT-BALANCE` field, which is out of
-  this slice's scope) inside a real JVM (`eclipse-temurin:21-jdk`),
-  cross-checked against Python's own `decode_record()` first.
+  this slice's scope; and a synthetic `DISPLAY`+`COMP-3`+binary record
+  including that unsigned 8-byte `BINARY` field) inside a real JVM
+  (`eclipse-temurin:21-jdk`), cross-checked against Python's own
+  `decode_record()` first.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

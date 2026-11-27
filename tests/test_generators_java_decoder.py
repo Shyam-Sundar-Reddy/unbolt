@@ -96,9 +96,53 @@ def test_comp1_field_is_unsupported() -> None:
         generate_java_decoder(dsl, resolved)
 
 
-def test_non_display_usage_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="only DISPLAY fields"):
-        _generate("01 REC.\n  05 A PIC S9(5) COMP-3.")
+def test_packed_decimal_field_decodes_via_the_shared_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(9) COMP-3.")["Rec"]
+    assert "public int getA() {" in out
+    assert "long v = decodePackedDecimal(buf, 0, 5, 9);" in out
+    assert "private static long decodePackedDecimal(" in out
+
+
+def test_packed_decimal_helper_emitted_once_even_with_two_fields() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5) COMP-3.\n  05 B PIC S9(5) COMP-3.")["Rec"]
+    assert out.count("private static long decodePackedDecimal(") == 1
+
+
+def test_signed_binary_field_reads_via_bytebuffer_natively() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(9) COMP.")["Rec"]
+    assert "public int getA() {" in out
+    assert "int raw = buf.getInt(0);" in out
+    assert "return (int) raw;" in out
+    assert "decodePackedDecimal" not in out
+
+
+def test_unsigned_binary_field_masks_and_widens() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(4) COMP.")["Rec"]
+    assert "short raw = buf.getShort(0);" in out
+    assert "return (short) (raw & 0xFFFF);" in out
+
+
+def test_unsigned_8_byte_binary_field_needs_no_mask() -> None:
+    # Its 18-digit ceiling (datatypes/sizing.py's own BINARY tier
+    # limit) means its max value always fits within long's own signed
+    # range - there's no wider primitive to widen into, and none is
+    # needed.
+    out = _generate("01 REC.\n  05 A PIC 9(18) COMP.")["Rec"]
+    assert "public long getA() {" in out
+    assert "long raw = buf.getLong(0);" in out
+    assert "return (long) raw;" in out
+    assert "&" not in out
+
+
+def test_non_display_non_packed_non_binary_usage_is_unsupported() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A COMP-1."), source_file="<test>")
+    report = recommend_mappings(dsl, "java")
+    overrides = apply_override(
+        Overrides(), "REC.A", "int", "forced", valid_choices=[], force=True
+    )
+    resolved = resolve_mapping(report, overrides)
+    with pytest.raises(UnsupportedDecodeError, match="COMP-1/COMP-2"):
+        generate_java_decoder(dsl, resolved)
 
 
 def test_sign_separate_is_unsupported() -> None:

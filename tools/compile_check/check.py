@@ -481,6 +481,57 @@ public class Main {
 """
 
 
+# Java flyweight decoder, second slice: COMP-3/binary. A synthetic
+# record covering DISPLAY+COMP-3+binary together, including an
+# unsigned 8-byte BINARY field (digits=18) specifically because
+# checking that case by hand caught a real bug - _UNSIGNED_WIDEN_MASK
+# had no entry for byte_size=8, since its max value turns out to
+# always fit within long's own signed range (confirmed by computing
+# both: 999999999999999999 < 9223372036854775807), so no mask is
+# needed there at all. Bytes hand-computed and cross-checked against
+# decode_record() directly before being hardcoded here.
+_JAVA_PACKED_BINARY_SOURCE = """01 REC.
+    05 UNSIGNED-DISPLAY PIC 9(6).
+    05 SIGNED-DISPLAY PIC S9(3).
+    05 PACKED PIC S9(9) COMP-3.
+    05 BINARY PIC S9(9) COMP.
+    05 UBINARY PIC 9(18) COMP.
+"""
+
+_JAVA_PACKED_BINARY_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5, (byte) 0xF6,
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xD3,
+\t\t\t(byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78, (byte) 0x9D,
+\t\t\t(byte) 0xC5, (byte) 0x21, (byte) 0x97, (byte) 0x4F,
+\t\t\t(byte) 0x0D, (byte) 0xE0, (byte) 0xB6, (byte) 0xB3,
+\t\t\t(byte) 0xA7, (byte) 0x63, (byte) 0xFF, (byte) 0xFF,
+\t\t};
+\t\tRec r = new Rec(ByteBuffer.wrap(data));
+\t\tif (r.getUnsignedDisplay() != 123456) {
+\t\t\tthrow new RuntimeException("UnsignedDisplay: got " + r.getUnsignedDisplay());
+\t\t}
+\t\tif (r.getSignedDisplay() != -123) {
+\t\t\tthrow new RuntimeException("SignedDisplay: got " + r.getSignedDisplay());
+\t\t}
+\t\tif (r.getPacked() != -123456789) {
+\t\t\tthrow new RuntimeException("Packed: got " + r.getPacked());
+\t\t}
+\t\tif (r.getBinary() != -987654321) {
+\t\t\tthrow new RuntimeException("Binary: got " + r.getBinary());
+\t\t}
+\t\tif (r.getUbinary() != 999999999999999999L) {
+\t\t\tthrow new RuntimeException("Ubinary: got " + r.getUbinary());
+\t\t}
+\t\tSystem.out.println("packed_binary Java decoder round-trip: OK");
+\t}
+}
+"""
+
+
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
 ) -> bool:
@@ -675,15 +726,19 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth slice): same
-    # real round-trip discipline as the Go decoder above - the running
-    # binary must decode to the exact values Python's own
-    # decode_record() already verified. First case only so far: a
-    # synthetic flat DISPLAY-only record (flat_display.cpy's own two
-    # integer fields, minus its decimal ACCOUNT-BALANCE field, which is
-    # out of this slice's scope).
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth/tenth slices):
+    # same real round-trip discipline as the Go decoder above - the
+    # running binary must decode to the exact values Python's own
+    # decode_record() already verified. Two cases: a synthetic flat
+    # DISPLAY-only record (flat_display.cpy's own two integer fields,
+    # minus its decimal ACCOUNT-BALANCE field, out of scope), and a
+    # synthetic DISPLAY+COMP-3+binary record including an unsigned
+    # 8-byte BINARY field.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "packed_binary", _JAVA_PACKED_BINARY_SOURCE, _JAVA_PACKED_BINARY_MAIN,
     )
 
     shutil.rmtree(out_dir)

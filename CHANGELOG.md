@@ -339,6 +339,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   own two integer fields and their already-verified bytes. 19 new tests
   (`tests/test_generators_java_decoder.py`,
   `tests/test_generators_engine.py`).
+- Phase 10, tenth slice: `COMP-3`/`PACKED-DECIMAL` and
+  `COMP`/`COMP-4`/`COMP-5`/`BINARY` for the Java flyweight decoder,
+  mirroring `go_decoder.py`'s own second slice. `COMP-3` decodes via a
+  private static `decodePackedDecimal()` helper (emitted once per
+  class, only when needed) - a direct port of Go's own nibble/pad/sign
+  logic. `BINARY` fields read via `ByteBuffer`'s own big-endian
+  `getShort`/`getInt`/`getLong(int)`. An unsigned field's resolved
+  type widens past its native read width via a mask - except an
+  unsigned 8-byte field, which needs none: a real round-trip test
+  caught a `KeyError` on exactly that case before it shipped (the
+  initial code assumed it would need the same masking pattern one
+  step further; it doesn't, since its 18-digit ceiling always fits
+  within `long`'s own signed range). `tools/compile_check` gained a
+  second Java decoder round-trip, including that unsigned 8-byte
+  field, built and actually run inside a real `eclipse-temurin:21-jdk`
+  JVM. 5 new tests (net, after retiring the now-obsolete "non-DISPLAY
+  usage isn't supported" test and adding six real ones).
 
 ## [0.1.1] - Released 2026-10-25
 
