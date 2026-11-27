@@ -28,12 +28,17 @@ read without touching position/mark state, and default to big-endian
 byte order - exactly COBOL's own big-endian convention - so, unlike
 Go's []byte slices, nothing here will ever need to reslice a buffer:
 every accessor can just read directly from the one ByteBuffer the
-record was constructed with, at a plain absolute int index. (Nested
-groups and OCCURS, once in scope, will still need a small per-instance
-`base` field to track "what absolute index does this view's own
-offset 0 correspond to" - Go gets the equivalent fact for free from
-slicing; Java pays for it with one int field per instance instead.
-Deferred to the slice that actually introduces nested groups.)
+record was constructed with, at a plain absolute int index. A plain
+nested group's position is fully known at codegen time (no runtime
+index is involved), so it needs no per-instance state at all - the
+same absolute-offset literals a flat record already uses work
+unchanged at any nesting depth. OCCURS, once in scope, is the one
+case that will genuinely need a small per-instance `base` field, to
+track "what absolute index does this occurrence's own offset 0
+correspond to" once a runtime index can shift it - Go gets the
+equivalent fact for free from slicing; Java will pay for it with one
+int field per instance instead. Deferred to the slice that actually
+introduces OCCURS.
 
 Decode errors throw java.lang.IllegalArgumentException (unchecked) -
 reusing generate_java()'s own precedent for its range validators,
@@ -53,14 +58,26 @@ own encoding/binary import was. Java has no unsigned primitives
 (java_rules.py's own ladder already reflects this - checked, not
 assumed), so an unsigned field's resolved type is always wide enough
 that the *next* unsigned-correct step is a mask-and-widen
-(`raw & 0xFFFF` for 2 bytes, `raw & 0xFFFFFFFFL` for 4 - the mask's
-own width has to match or exceed the target type for the widening
-promotion to produce the right unsigned value) rather than Go's
-"read natively unsigned via encoding/binary, no masking needed" shape.
-An unsigned 8-byte BINARY field is never reachable here: its full
-range always exceeds `long`'s own signed range, so the ladder already
-resolves it to BigInteger, which the existing type check rejects
-before any binary-specific logic runs.
+(`raw & 0xFFFF` for 2 bytes, `raw & 0xFFFFFFFFL` for 4) - except an
+unsigned 8-byte field, which needs no mask at all: its 18-digit
+ceiling (datatypes/sizing.py's own BINARY tier limit) always fits
+within long's own signed range (999999999999999999 <
+9223372036854775807, confirmed by computing both, not assumed), so
+there's no wider type to widen into. An earlier version of this code
+got that backwards - assumed the unsigned 8-byte case needed the same
+masking pattern one step further and had no mask entry for it at all,
+raising KeyError the moment it was actually run - caught and fixed by
+a real round-trip test, exactly the discipline those tests exist for.
+
+Third slice: nested groups, mirroring go_decoder.py's own third slice.
+A nested group gets its own public static class, textually nested
+inside its parent (mirroring generate_java()'s own nested-static-class
+shape, since Java has no floating top-level static class the way Go's
+flat top-level types allow), with an accessor on the parent returning
+a fresh instance sharing the same buf - one small heap allocation per
+call, unlike Go's zero-allocation struct values (the real,
+documented difference this module's own opening paragraph already
+names). No base field needed yet, as explained above.
 """
 
 from unbolt.datatypes.sizing import (
@@ -169,61 +186,103 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
         >>> "public short getA()" in generate_java_decoder(dsl, resolved)["X"]
         True
     """
-    return {
-        go_field_name(root.name): _render_root(root, root.name, resolved) for root in dsl.roots
-    }
+    result: dict[str, str] = {}
+    for root in dsl.roots:
+        if root.pic is not None or not root.children:
+            raise UnsupportedDecodeError(
+                f"java decoder: root {root.name!r} must be a group in this slice"
+            )
+        needs: set[str] = set()
+        body = _render_class(root, root.name, resolved, needs, top_level=True)
+        if "packed" in needs:
+            lines = body.splitlines()
+            closing_brace = lines.pop()
+            lines.append("")
+            lines.extend(
+                f"    {line}" if line else "" for line in _PACKED_DECIMAL_HELPER.splitlines()
+            )
+            lines.append(closing_brace)
+            body = "\n".join(lines)
+        result[go_field_name(root.name)] = body + "\n"
+    return result
 
 
-def _render_root(root: FieldNode, field_path: str, resolved: dict[str, str]) -> str:
-    if root.pic is not None or not root.children:
-        raise UnsupportedDecodeError(
-            f"java decoder: root {root.name!r} must be a group in this slice"
-        )
+def _render_class(
+    node: FieldNode,
+    field_path: str,
+    resolved: dict[str, str],
+    needs: set[str],
+    *,
+    top_level: bool,
+) -> str:
+    """Emits one class (the root, or a nested group) - its own
+    constructor, one accessor per leaf field, and, for a nested-group
+    child, its own class textually nested inside this one (Java has no
+    floating top-level `static class`, unlike Go's flat top-level
+    types - mirrors generate_java()'s own nested-static-class shape
+    for exactly that reason) plus an accessor returning a fresh
+    instance sharing the same buffer (one small allocation per call -
+    a real, documented difference from Go's zero-allocation struct
+    values, since Java has no equivalent value type).
+    """
+    class_name = go_field_name(node.name)
+    keyword = "public class" if top_level else "public static class"
 
-    class_name = go_field_name(root.name)
-    needs: set[str] = set()
-    accessor_blocks = [
-        _render_leaf_accessor(child, f"{field_path}.{child.name}", resolved, needs)
-        for child in root.children
-    ]
+    accessor_blocks: list[str] = []
+    nested_bodies: list[str] = []
+    for child in node.children:
+        if child.occurs is not None:
+            raise UnsupportedDecodeError(
+                f"java decoder: OCCURS field {child.name!r} isn't supported yet"
+            )
+        if child.redefines is not None:
+            raise UnsupportedDecodeError(
+                f"java decoder: REDEFINES field {child.name!r} isn't supported yet"
+            )
+        child_path = f"{field_path}.{child.name}"
+        if child.pic is None and child.children:
+            child_class_name = go_field_name(child.name)
+            nested_bodies.append(_render_class(child, child_path, resolved, needs, top_level=False))
+            method_name, _ = java_field_name(child.name, source_line=child.source_line)
+            getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
+            accessor_blocks.append(
+                f"public {child_class_name} {getter_name}() {{\n"
+                f"    return new {child_class_name}(buf);\n"
+                "}"
+            )
+            continue
+        accessor_blocks.append(_render_leaf_accessor(child, child_path, resolved, needs))
 
-    lines = [
-        f"public class {class_name} {{",
-        "    private final java.nio.ByteBuffer buf;",
-        "",
-        f"    public {class_name}(java.nio.ByteBuffer buf) {{",
-        f"        if (buf.capacity() != {root.byte_size}) {{",
-        f'            throw new IllegalArgumentException("{class_name}: expected '
-        f'{root.byte_size} bytes, got " + buf.capacity());',
-        "        }",
-        "        this.buf = buf;",
-        "    }",
-    ]
+    lines = [f"{keyword} {class_name} {{", "    private final java.nio.ByteBuffer buf;", ""]
+    if top_level:
+        lines += [
+            f"    public {class_name}(java.nio.ByteBuffer buf) {{",
+            f"        if (buf.capacity() != {node.byte_size}) {{",
+            f'            throw new IllegalArgumentException("{class_name}: expected '
+            f'{node.byte_size} bytes, got " + buf.capacity());',
+            "        }",
+            "        this.buf = buf;",
+            "    }",
+        ]
+    else:
+        lines += [
+            f"    {class_name}(java.nio.ByteBuffer buf) {{",
+            "        this.buf = buf;",
+            "    }",
+        ]
     for block in accessor_blocks:
         lines.append("")
         lines.extend(f"    {line}" if line else "" for line in block.splitlines())
-    if "packed" in needs:
+    for nested in nested_bodies:
         lines.append("")
-        lines.extend(f"    {line}" if line else "" for line in _PACKED_DECIMAL_HELPER.splitlines())
+        lines.extend(f"    {line}" if line else "" for line in nested.splitlines())
     lines.append("}")
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
 
 
 def _render_leaf_accessor(
     node: FieldNode, field_path: str, resolved: dict[str, str], needs: set[str]
 ) -> str:
-    if node.occurs is not None:
-        raise UnsupportedDecodeError(
-            f"java decoder: OCCURS field {node.name!r} isn't supported yet"
-        )
-    if node.redefines is not None:
-        raise UnsupportedDecodeError(
-            f"java decoder: REDEFINES field {node.name!r} isn't supported yet"
-        )
-    if node.pic is None and node.children:
-        raise UnsupportedDecodeError(
-            f"java decoder: nested group field {node.name!r} isn't supported yet"
-        )
     if node.pic is None:
         raise UnsupportedDecodeError(
             f"java decoder: COMP-1/COMP-2 field {node.name!r} isn't supported yet"

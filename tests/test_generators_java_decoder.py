@@ -75,9 +75,41 @@ def test_redefines_field_is_unsupported() -> None:
         _generate("01 REC.\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).")
 
 
-def test_nested_group_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="nested group"):
-        _generate("01 REC.\n  05 GRP.\n    10 A PIC 9(3).")
+def test_nested_group_gets_its_own_static_class_and_accessor() -> None:
+    out = _generate("01 REC.\n  05 GRP.\n    10 A PIC 9(3).")["Rec"]
+    assert "public Grp getGrp() {" in out
+    assert "return new Grp(buf);" in out
+    assert "public static class Grp {" in out
+    assert "Grp(java.nio.ByteBuffer buf) {" in out
+    assert "public short getA() {" in out
+
+
+def test_doubly_nested_group_preserves_absolute_offsets() -> None:
+    out = _generate(
+        "01 REC.\n"
+        "  05 HEADER.\n"
+        "    10 ID PIC 9(8).\n"
+        "    10 DATE.\n"
+        "      15 YEAR PIC 9(4).\n"
+        "      15 MONTH PIC 9(2).\n"
+    )["Rec"]
+    assert "public static class Header {" in out
+    assert "public static class Date {" in out
+    assert "for (int i = 0; i < 8; i++)" in out  # ID, absolute from the record root
+    assert "for (int i = 8; i < 12; i++)" in out  # YEAR
+    assert "for (int i = 12; i < 14; i++)" in out  # MONTH
+
+
+def test_nested_occurs_group_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
+        _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")
+
+
+def test_nested_redefines_group_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
+        _generate(
+            "01 REC.\n  05 A.\n    10 X PIC 9(3).\n  05 B REDEFINES A.\n    10 Y PIC 9(3)."
+        )
 
 
 def test_alphanumeric_field_is_unsupported() -> None:

@@ -208,8 +208,8 @@ dropped — never silently misconverted:
   `decode_display()`/`decode_alpha()` primitives applied by hand, per
   occurrence.
 - **Java flyweight decoder (`emit="decoder"`, `target="java"`, ADR
-  0009, Phase 10) covers flat `DISPLAY`/`COMP-3`/binary records so
-  far — far narrower than the Go decoder's eight slices.**
+  0009, Phase 10) covers `DISPLAY`/`COMP-3`/binary records, flat or
+  nested, so far — far narrower than the Go decoder's eight slices.**
   `generate_java_decoder()` emits one public class per DSL root (Java
   allows only one public top-level type per file, the same reason
   `generate_java()` already returns `dict[str, str]` rather than one
@@ -241,22 +241,36 @@ dropped — never silently misconverted:
   input before the round-trip below caught it. Decode errors throw
   `java.lang.IllegalArgumentException` (unchecked), reusing
   `generate_java()`'s own precedent for its range validators rather
-  than a new checked-exception type. Not yet supported — each raises
-  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
-  root; `OCCURS`; `REDEFINES`; nested groups; `COMP-1`/`COMP-2`; `SIGN
-  IS SEPARATE`/`LEADING`; alphanumeric/edited/national fields; and any
-  resolved Java type outside the plain `byte`/`short`/`int`/`long`
-  ladder — `BigInteger` (the ladder's own next step up), `BigDecimal`
-  (every decimal/scaled field's resolved type for Java — no analogue
-  to Go's scaled-`int64` marker exists here, so this is a different,
-  still-open design question, not a mechanical lift), and `String`
-  (a forced override). Verified with real round-trips, not just
-  compile checks: `tools/compile_check` builds, **runs**, and asserts
-  decoded values from two generated decoders (a synthetic flat
-  `DISPLAY`-only record reusing `flat_display.cpy`'s own two integer
-  fields, minus its decimal `ACCOUNT-BALANCE` field, which is out of
-  this slice's scope; and a synthetic `DISPLAY`+`COMP-3`+binary record
-  including that unsigned 8-byte `BINARY` field) inside a real JVM
+  than a new checked-exception type. A nested group gets its own `public
+  static class` textually nested inside its parent — mirroring
+  `generate_java()`'s own nested-static-class shape, since Java has no
+  floating top-level `static class` the way Go's flat top-level types
+  allow — with an accessor returning a fresh instance sharing the same
+  `buf` (one small heap allocation per call, unlike Go's zero-
+  allocation struct values — a real, documented difference, not
+  hidden). Offsets stay absolute from the record root at every nesting
+  depth, exactly as for a flat record — no per-instance `base`
+  tracking is needed for plain nested groups the way it eventually
+  will be for `OCCURS` (where a runtime index genuinely shifts the
+  position; a static nested group's position is fully known at
+  codegen time, so there's nothing to track at runtime). Not yet
+  supported — each raises `UnsupportedDecodeError` rather than
+  guessing: a scalar (non-group) root; `OCCURS`; `REDEFINES`;
+  `COMP-1`/`COMP-2`; `SIGN IS SEPARATE`/`LEADING`; alphanumeric/edited/
+  national fields; and any resolved Java type outside the plain
+  `byte`/`short`/`int`/`long` ladder — `BigInteger` (the ladder's own
+  next step up), `BigDecimal` (every decimal/scaled field's resolved
+  type for Java — no analogue to Go's scaled-`int64` marker exists
+  here, so this is a different, still-open design question, not a
+  mechanical lift), and `String` (a forced override). Verified with
+  real round-trips, not just compile checks: `tools/compile_check`
+  builds, **runs**, and asserts decoded values from three generated
+  decoders (a synthetic flat `DISPLAY`-only record reusing
+  `flat_display.cpy`'s own two integer fields, minus its decimal
+  `ACCOUNT-BALANCE` field, which is out of this slice's scope; a
+  synthetic `DISPLAY`+`COMP-3`+binary record including that unsigned
+  8-byte `BINARY` field; and a synthetic record mirroring
+  `nested_groups.cpy` two levels deep) inside a real JVM
   (`eclipse-temurin:21-jdk`), cross-checked against Python's own
   `decode_record()` first.
 

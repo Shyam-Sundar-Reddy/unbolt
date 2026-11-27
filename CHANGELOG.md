@@ -356,6 +356,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   field, built and actually run inside a real `eclipse-temurin:21-jdk`
   JVM. 5 new tests (net, after retiring the now-obsolete "non-DISPLAY
   usage isn't supported" test and adding six real ones).
+- Phase 10, eleventh slice: nested groups for the Java flyweight
+  decoder, mirroring `go_decoder.py`'s own third slice - simpler than
+  first expected: a plain (non-`OCCURS`) nested group's position is
+  fully known at codegen time, so no per-instance `base` field is
+  needed yet (that's deferred to the slice that actually introduces
+  `OCCURS`, where a runtime index genuinely shifts a position - this
+  module's own docstring previously assumed `base` would be needed
+  here too; corrected after actually working through it). A nested
+  group gets its own `public static class`, textually nested inside
+  its parent (mirroring `generate_java()`'s own nested-static-class
+  shape), with an accessor returning a fresh instance sharing the same
+  `buf` - one small heap allocation per call, a real and now-documented
+  difference from Go's zero-allocation struct values. `tools/compile_check`
+  gained a third Java decoder round-trip, mirroring `nested_groups.cpy`
+  two levels deep and reusing bytes already cross-checked for the Go
+  decoder's own equivalent round-trip, built and actually run inside a
+  real `eclipse-temurin:21-jdk` JVM. 3 new tests (net, after retiring
+  the now-obsolete "nested group isn't supported" test and adding two
+  real ones).
 
 ## [0.1.1] - Released 2026-10-25
 

@@ -531,6 +531,51 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, third slice: nested groups, two levels deep -
+# same structure and bytes as nested_groups.cpy's own real fixture
+# (minus its decimal ORDER-TOTAL field, out of scope for this
+# generator), already cross-checked against decode_record() for the
+# Go decoder's own nested_groups round-trip above - reused directly.
+_JAVA_NESTED_GROUPS_SOURCE = """01 ORDER-RECORD.
+    05 ORDER-HEADER.
+        10 ORDER-ID PIC 9(8).
+        10 ORDER-DATE.
+            15 ORDER-YEAR PIC 9(4).
+            15 ORDER-MONTH PIC 9(2).
+            15 ORDER-DAY PIC 9(2).
+"""
+
+_JAVA_NESTED_GROUPS_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF0, (byte) 0xF0, (byte) 0xF0, (byte) 0xF0,
+\t\t\t(byte) 0xF0, (byte) 0xF0, (byte) 0xF4, (byte) 0xF2,
+\t\t\t(byte) 0xF2, (byte) 0xF0, (byte) 0xF2, (byte) 0xF4,
+\t\t\t(byte) 0xF1, (byte) 0xF1,
+\t\t\t(byte) 0xF0, (byte) 0xF5,
+\t\t};
+\t\tOrderRecord r = new OrderRecord(ByteBuffer.wrap(data));
+\t\tOrderRecord.OrderHeader header = r.getOrderHeader();
+\t\tif (header.getOrderId() != 42) {
+\t\t\tthrow new RuntimeException("OrderId: got " + header.getOrderId());
+\t\t}
+\t\tOrderRecord.OrderHeader.OrderDate date = header.getOrderDate();
+\t\tif (date.getOrderYear() != 2024) {
+\t\t\tthrow new RuntimeException("OrderYear: got " + date.getOrderYear());
+\t\t}
+\t\tif (date.getOrderMonth() != 11) {
+\t\t\tthrow new RuntimeException("OrderMonth: got " + date.getOrderMonth());
+\t\t}
+\t\tif (date.getOrderDay() != 5) {
+\t\t\tthrow new RuntimeException("OrderDay: got " + date.getOrderDay());
+\t\t}
+\t\tSystem.out.println("nested_groups Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
@@ -726,19 +771,23 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth/tenth slices):
-    # same real round-trip discipline as the Go decoder above - the
-    # running binary must decode to the exact values Python's own
-    # decode_record() already verified. Two cases: a synthetic flat
-    # DISPLAY-only record (flat_display.cpy's own two integer fields,
-    # minus its decimal ACCOUNT-BALANCE field, out of scope), and a
-    # synthetic DISPLAY+COMP-3+binary record including an unsigned
-    # 8-byte BINARY field.
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth/tenth/eleventh
+    # slices): same real round-trip discipline as the Go decoder above
+    # - the running binary must decode to the exact values Python's
+    # own decode_record() already verified. Three cases: a synthetic
+    # flat DISPLAY-only record (flat_display.cpy's own two integer
+    # fields, minus its decimal ACCOUNT-BALANCE field, out of scope),
+    # a synthetic DISPLAY+COMP-3+binary record including an unsigned
+    # 8-byte BINARY field, and a synthetic record mirroring
+    # nested_groups.cpy two levels deep.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "packed_binary", _JAVA_PACKED_BINARY_SOURCE, _JAVA_PACKED_BINARY_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "nested_groups", _JAVA_NESTED_GROUPS_SOURCE, _JAVA_NESTED_GROUPS_MAIN,
     )
 
     shutil.rmtree(out_dir)
