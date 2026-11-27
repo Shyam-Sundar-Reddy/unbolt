@@ -654,6 +654,30 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, sixth slice: plain alphanumeric decode -
+# reuses _ALPHA_SOURCE and its already-verified bytes directly from
+# the Go decoder's own equivalent round-trip above.
+_JAVA_ALPHA_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xC8, (byte) 0xC5, (byte) 0xD3, (byte) 0xD3, (byte) 0xD6,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0xC1, (byte) 0xC2, (byte) 0xF1,
+\t\t};
+\t\tRec r = new Rec(ByteBuffer.wrap(data));
+\t\tif (!r.getName().equals("HELLO     ")) {
+\t\t\tthrow new RuntimeException("Name: got " + r.getName());
+\t\t}
+\t\tif (!r.getCode().equals("AB1")) {
+\t\t\tthrow new RuntimeException("Code: got " + r.getCode());
+\t\t}
+\t\tSystem.out.println("alpha Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
@@ -849,20 +873,21 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth-thirteenth
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth-fourteenth
     # slices): same real round-trip discipline as the Go decoder above
     # - the running binary must decode to the exact values Python's
-    # own decode_record() already verified. Five cases: a synthetic
+    # own decode_record() already verified. Six cases: a synthetic
     # flat DISPLAY-only record (flat_display.cpy's own two integer
     # fields, minus its decimal ACCOUNT-BALANCE field, out of scope),
     # a synthetic DISPLAY+COMP-3+binary record including an unsigned
     # 8-byte BINARY field, a synthetic record mirroring
     # nested_groups.cpy two levels deep, a synthetic record covering
-    # all three non-default sign placements, and a synthetic record
-    # covering BigInteger across every supported usage/sign placement
-    # - the last two reuse _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE and
-    # their bytes directly from the Go decoder's own equivalent
-    # round-trips above.
+    # all three non-default sign placements, a synthetic record
+    # covering BigInteger across every supported usage/sign placement,
+    # and a synthetic record covering plain alphanumeric decode - the
+    # last three reuse _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE/
+    # _ALPHA_SOURCE and their bytes directly from the Go decoder's own
+    # equivalent round-trips above.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
@@ -877,6 +902,9 @@ def main() -> int:
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "bigint", _BIGINT_SOURCE, _JAVA_BIGINT_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "alpha", _ALPHA_SOURCE, _JAVA_ALPHA_MAIN,
     )
 
     shutil.rmtree(out_dir)

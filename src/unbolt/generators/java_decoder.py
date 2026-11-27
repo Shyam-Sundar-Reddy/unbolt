@@ -101,6 +101,23 @@ established in the second slice above (every BINARY tier's digit
 ceiling already fits within its own native signed type) - a forced
 BigInteger override on a binary field still raises rather than
 guessing.
+
+Sixth slice: plain alphanumeric (PIC X/A) decode. Unlike Go, which
+has no EBCDIC codec in its standard library at all (go_decoder.py
+hardcodes a 256-entry cp037 table for exactly that reason), Java's
+standard library ships "Cp037" as a real Charset
+(Charset.forName("Cp037"), resolving to "IBM037") - confirmed by
+actually running it in a real JDK 21 container and checking its
+output against decode_alpha()'s own doctest value, not assumed from
+the name alone. So this slice needs no table and no dependency
+decision at all: a shared `private static final Charset CP037 =
+Charset.forName("Cp037");` field (emitted once per class, only when
+an alphanumeric field exists), and each accessor copies its own bytes
+into a small byte[] (ByteBuffer has no absolute bulk-get on every
+JDK version, so this is a plain loop, not a bulk API call) and
+decodes it with `new String(bytes, CP037)`. Returns the exact
+fixed-width, space-padded text, matching decode_alpha()'s own default
+(no silent trailing-space stripping).
 """
 
 from unbolt.datatypes.sizing import (
@@ -199,6 +216,11 @@ _PACKED_DECIMAL_BIG_HELPER = """private static java.math.BigInteger decodePacked
     }
     return v;
 }"""
+
+_CP037_CHARSET_FIELD = (
+    'private static final java.nio.charset.Charset CP037 = '
+    'java.nio.charset.Charset.forName("Cp037");'
+)
 
 _PACKED_DECIMAL_HELPER = """private static long decodePackedDecimal(
         java.nio.ByteBuffer buf, int start, int end, int digits) {
@@ -299,6 +321,8 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
         needs: set[str] = set()
         body = _render_class(root, root.name, resolved, needs, top_level=True)
         helpers = []
+        if "alpha" in needs:
+            helpers.append(_CP037_CHARSET_FIELD)
         if "packed" in needs:
             helpers.append(_PACKED_DECIMAL_HELPER)
         if "bigint_display" in needs:
@@ -397,10 +421,23 @@ def _render_leaf_accessor(
         raise UnsupportedDecodeError(
             f"java decoder: COMP-1/COMP-2 field {node.name!r} isn't supported yet"
         )
-    if is_alpha_pic(node.pic) or is_edited_pic(node.pic) or is_national_pic(node.pic):
+    if is_edited_pic(node.pic) or is_national_pic(node.pic):
         raise UnsupportedDecodeError(
-            f"java decoder: alphanumeric/edited/national field {node.name!r} isn't supported yet"
+            f"java decoder: edited/national field {node.name!r} isn't supported yet"
         )
+
+    method_name, _ = java_field_name(node.name, source_line=node.source_line)
+    getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
+    start, end = node.offset, node.offset + node.byte_size
+
+    if is_alpha_pic(node.pic):
+        # Alphanumeric fields never go through mapping's integer
+        # ladder (mapping/engine.py excludes them from candidate
+        # generation), so field_path has no entry in resolved -
+        # checking is_alpha_pic first, before ever touching
+        # resolved[field_path], is what avoids a KeyError here.
+        needs.add("alpha")
+        return _render_alpha_accessor(getter_name, start, end)
 
     java_type = resolved[field_path]
     if java_type != _BIG_INTEGER_JAVA_TYPE and java_type not in _INTEGER_JAVA_TYPES:
@@ -408,10 +445,6 @@ def _render_leaf_accessor(
             f"java decoder: resolved type {java_type!r} for {field_path!r} isn't supported "
             "in this slice (only byte/short/int/long/BigInteger)"
         )
-
-    method_name, _ = java_field_name(node.name, source_line=node.source_line)
-    getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
-    start, end = node.offset, node.offset + node.byte_size
 
     if java_type == _BIG_INTEGER_JAVA_TYPE:
         return _render_bigint_leaf_accessor(node, getter_name, start, end, needs)
@@ -439,6 +472,20 @@ def _render_leaf_accessor(
         )
 
     return f"public {java_type} {getter_name}() {{\n" + body + "}"
+
+
+def _render_alpha_accessor(getter_name: str, start: int, end: int) -> str:
+    byte_size = end - start
+    index_expr = "i" if start == 0 else f"i - {start}"
+    return (
+        f"public String {getter_name}() {{\n"
+        f"    byte[] bytes = new byte[{byte_size}];\n"
+        f"    for (int i = {start}; i < {end}; i++) {{\n"
+        f"        bytes[{index_expr}] = buf.get(i);\n"
+        "    }\n"
+        "    return new String(bytes, CP037);\n"
+        "}"
+    )
 
 
 def _render_bigint_leaf_accessor(

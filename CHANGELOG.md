@@ -403,6 +403,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   actually run inside a real `eclipse-temurin:21-jdk` JVM. 6 new tests
   (net, after retiring the now-obsolete "BigInteger isn't supported"
   test and adding seven real ones).
+- Phase 10, fourteenth slice: plain alphanumeric (`PIC X`/`A`) decode
+  for the Java flyweight decoder. Checked, rather than assumed,
+  whether Java's stdlib really ships `Cp037` the way its name
+  suggests: ran `Charset.forName("Cp037")` inside a real
+  `eclipse-temurin:21-jdk` container and compared its output against
+  `decode_alpha()`'s own doctest value - it matched exactly (resolves
+  to `"IBM037"`). Unlike Go, which has no EBCDIC codec in its standard
+  library at all and hardcodes a 256-entry table for it, Java needs
+  neither a table nor a new dependency, just a standard-library
+  `Charset` lookup - settling Go's own hardcode-vs-dependency question
+  for Java before it was even asked. A shared `private static final
+  Charset CP037` field is emitted once per class, only when needed;
+  each accessor copies its own bytes into a small `byte[]` and decodes
+  with `new String(bytes, CP037)`. `tools/compile_check` gained a
+  sixth Java decoder round-trip, reusing the Go decoder's own
+  `_ALPHA_SOURCE` and already-verified bytes directly, built and
+  actually run inside a real `eclipse-temurin:21-jdk` JVM. 3 new tests
+  (net, after retiring the now-obsolete "alphanumeric isn't supported"
+  test and adding four real ones).
 
 ## [0.1.1] - Released 2026-10-25
 
