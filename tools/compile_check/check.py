@@ -678,6 +678,67 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, seventh slice: OCCURS - reuses the real
+# occurs_table.cpy fixture and the exact bytes already cross-checked
+# (against decode_display()/decode_alpha() applied by hand, since
+# decode_record() doesn't support OCCURS yet) for the Go decoder's own
+# equivalent round-trip above.
+_JAVA_OCCURS_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF0,
+\t\t\t(byte) 0xF3, (byte) 0xE6, (byte) 0xC9, (byte) 0xC4, (byte) 0xC7,
+\t\t\t(byte) 0xC5, (byte) 0xE3, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0xF0, (byte) 0xF0, (byte) 0xF1, (byte) 0xF0,
+\t\t\t(byte) 0xC7, (byte) 0xC1, (byte) 0xC4, (byte) 0xC7, (byte) 0xC5,
+\t\t\t(byte) 0xE3, (byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0xF0, (byte) 0xF0, (byte) 0xF2, (byte) 0xF5, (byte) 0xC7,
+\t\t\t(byte) 0xC9, (byte) 0xE9, (byte) 0xD4, (byte) 0xD6, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0xF0,
+\t\t\t(byte) 0xF0, (byte) 0xF0, (byte) 0xF7, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0xF0, (byte) 0xF0,
+\t\t\t(byte) 0xF0, (byte) 0xF0, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40, (byte) 0x40,
+\t\t\t(byte) 0x40, (byte) 0x40, (byte) 0xF0, (byte) 0xF0, (byte) 0xF0,
+\t\t\t(byte) 0xF0,
+\t\t};
+\t\tInventoryRecord r = new InventoryRecord(ByteBuffer.wrap(data));
+\t\tif (r.getWarehouseId() != 1234) {
+\t\t\tthrow new RuntimeException("WarehouseId: got " + r.getWarehouseId());
+\t\t}
+\t\tif (r.getItemCount() != 3) {
+\t\t\tthrow new RuntimeException("ItemCount: got " + r.getItemCount());
+\t\t}
+\t\tString[] wantSkus = {"WIDGET    ", "GADGET    ", "GIZMO     ", "          ", "          "};
+\t\tshort[] wantQtys = {10, 25, 7, 0, 0};
+\t\tfor (int i = 0; i < 5; i++) {
+\t\t\tInventoryRecord.ItemTable item = r.getItemTable(i);
+\t\t\tif (!item.getItemSku().equals(wantSkus[i])) {
+\t\t\t\tthrow new RuntimeException(
+\t\t\t\t\t"ItemTable(" + i + ").ItemSku: got " + item.getItemSku());
+\t\t\t}
+\t\t\tif (item.getItemQty() != wantQtys[i]) {
+\t\t\t\tthrow new RuntimeException(
+\t\t\t\t\t"ItemTable(" + i + ").ItemQty: got " + item.getItemQty());
+\t\t\t}
+\t\t}
+\t\tboolean threw = false;
+\t\ttry {
+\t\t\tr.getItemTable(5);
+\t\t} catch (IllegalArgumentException e) {
+\t\t\tthrew = true;
+\t\t}
+\t\tif (!threw) {
+\t\t\tthrow new RuntimeException("ItemTable(5): want an exception, got none");
+\t\t}
+\t\tSystem.out.println("occurs Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
@@ -873,21 +934,23 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth-fourteenth
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth-fifteenth
     # slices): same real round-trip discipline as the Go decoder above
     # - the running binary must decode to the exact values Python's
-    # own decode_record() already verified. Six cases: a synthetic
-    # flat DISPLAY-only record (flat_display.cpy's own two integer
-    # fields, minus its decimal ACCOUNT-BALANCE field, out of scope),
-    # a synthetic DISPLAY+COMP-3+binary record including an unsigned
-    # 8-byte BINARY field, a synthetic record mirroring
+    # own decode_record() already verified (except the OCCURS case,
+    # same caveat as the Go decoder's own OCCURS round-trip). Seven
+    # cases: a synthetic flat DISPLAY-only record (flat_display.cpy's
+    # own two integer fields, minus its decimal ACCOUNT-BALANCE field,
+    # out of scope), a synthetic DISPLAY+COMP-3+binary record including
+    # an unsigned 8-byte BINARY field, a synthetic record mirroring
     # nested_groups.cpy two levels deep, a synthetic record covering
     # all three non-default sign placements, a synthetic record
     # covering BigInteger across every supported usage/sign placement,
-    # and a synthetic record covering plain alphanumeric decode - the
-    # last three reuse _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE/
-    # _ALPHA_SOURCE and their bytes directly from the Go decoder's own
-    # equivalent round-trips above.
+    # a synthetic record covering plain alphanumeric decode, and the
+    # real occurs_table.cpy fixture - the last four reuse
+    # _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE/_ALPHA_SOURCE/
+    # occurs_table.cpy and their bytes directly from the Go decoder's
+    # own equivalent round-trips above.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
@@ -905,6 +968,9 @@ def main() -> int:
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "alpha", _ALPHA_SOURCE, _JAVA_ALPHA_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "occurs", (FIXTURES_DIR / "occurs_table.cpy").read_text(), _JAVA_OCCURS_MAIN,
     )
 
     shutil.rmtree(out_dir)

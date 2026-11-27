@@ -250,11 +250,9 @@ dropped — never silently misconverted:
   `buf` (one small heap allocation per call, unlike Go's zero-
   allocation struct values — a real, documented difference, not
   hidden). Offsets stay absolute from the record root at every nesting
-  depth, exactly as for a flat record — no per-instance `base`
-  tracking is needed for plain nested groups the way it eventually
-  will be for `OCCURS` (where a runtime index genuinely shifts the
-  position; a static nested group's position is fully known at
-  codegen time, so there's nothing to track at runtime). A resolved
+  depth for a plain nested group, exactly as for a flat record — no
+  per-instance `base` tracking needed there, since its position is
+  fully known at codegen time. A resolved
   `BigInteger` field (never decision 0004's default — `java_rules.py`'s
   own ladder tops out at `long` — but reachable past `long`'s own
   ~19-digit range, or via a forced override) reuses the same
@@ -284,9 +282,32 @@ dropped — never silently misconverted:
   is a plain loop, not a bulk API call) and decodes with `new
   String(bytes, CP037)`. Returns the exact fixed-width, space-padded
   text, matching `decode_alpha()`'s own default (no silent trailing-
-  space stripping). Not yet supported — each raises
-  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
-  root; `OCCURS`; `REDEFINES`; `COMP-1`/`COMP-2`; edited/national
+  space stripping). `OCCURS` (leaf or group) gets an indexed accessor
+  (`int index` parameter, a bounds-checked `IllegalArgumentException`
+  — no sentinel return needed, unlike Go's own `(zero, error)` shape,
+  since Java's exceptions are unchecked). Every class that is ever
+  reached through an `OCCURS` group gains a `private final int base`
+  field (via a package-private `(ByteBuffer buf, int base)`
+  constructor) meaning "what absolute index does this instance's own
+  offset 0 correspond to" — absent on any class never reached through
+  `OCCURS`, which keeps the bare-absolute-offset scheme unchanged.
+  Entering an `OCCURS` group's children resets this to that group's
+  own offset, however deep; a plain nested group passes whatever
+  `base` it received straight through. Unlike Go, where a reslice
+  already puts byte 0 of a new slice at the right place with zero
+  runtime state, Java's `base` field *is* runtime state, since Java
+  accessors never reslice — so every DISPLAY sign-placement body that
+  does its own offset arithmetic (signed trailing overpunch, leading
+  overpunch, either `SIGN IS SEPARATE` form, and their `BigInteger`
+  equivalents) needed a second, parallel body generator written in
+  terms of runtime-declared `start`/`end` local variables instead of
+  codegen-time literals; bodies with no such arithmetic (unsigned
+  `DISPLAY`, `COMP-3`, `BINARY`, alphanumeric) needed no second copy,
+  since they already just interpolate `start`/`end` wherever they
+  appear. Indexing is 0-based, matching `generate_java()`'s own
+  `[N]Type` array convention, same as Go's. Not yet supported — each
+  raises `UnsupportedDecodeError` rather than guessing: a scalar
+  (non-group) root; `REDEFINES`; `COMP-1`/`COMP-2`; edited/national
   fields; `BigInteger` on a binary field; and any other resolved Java
   type outside the plain `byte`/`short`/`int`/`long`/`BigInteger` set
   — `BigDecimal` (every decimal/scaled field's resolved type for
@@ -295,19 +316,26 @@ dropped — never silently misconverted:
   lift), and `String` as a forced override onto a non-alphanumeric
   field. Verified with real round-trips, not just compile checks:
   `tools/compile_check` builds, **runs**, and asserts decoded values
-  from six generated decoders (a synthetic flat `DISPLAY`-only record
-  reusing `flat_display.cpy`'s own two integer fields, minus its
-  decimal `ACCOUNT-BALANCE` field, which is out of this slice's scope;
-  a synthetic `DISPLAY`+`COMP-3`+binary record including that unsigned
-  8-byte `BINARY` field; a synthetic record mirroring
+  from seven generated decoders (a synthetic flat `DISPLAY`-only
+  record reusing `flat_display.cpy`'s own two integer fields, minus
+  its decimal `ACCOUNT-BALANCE` field, which is out of this slice's
+  scope; a synthetic `DISPLAY`+`COMP-3`+binary record including that
+  unsigned 8-byte `BINARY` field; a synthetic record mirroring
   `nested_groups.cpy` two levels deep; a synthetic record covering all
   three non-default sign placements; a synthetic record covering
-  `BigInteger` across every supported usage/sign placement; and a
-  synthetic record covering plain alphanumeric decode — the last
-  three reusing the Go decoder's own `sign_placements`/`bigint`/
-  `alpha` sources and bytes directly) inside a real JVM
+  `BigInteger` across every supported usage/sign placement; a
+  synthetic record covering plain alphanumeric decode; and the real
+  `occurs_table.cpy` fixture, a leaf `OCCURS` count sibling to a group
+  `OCCURS`, including an out-of-range index — the last four reusing
+  the Go decoder's own `sign_placements`/`bigint`/`alpha`/
+  `occurs_table.cpy` sources and bytes directly) inside a real JVM
   (`eclipse-temurin:21-jdk`), cross-checked against Python's own
-  `decode_record()` first.
+  `decode_record()` first — except the `OCCURS` case, where
+  `decode_record()` itself doesn't support `OCCURS` yet (see "Record
+  decoding" above), so its expected values are instead cross-checked
+  against the same leaf-level `decode_display()`/`decode_alpha()`
+  primitives applied by hand, per occurrence, same as the Go
+  decoder's own `OCCURS` round-trip.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

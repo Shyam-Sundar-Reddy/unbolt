@@ -65,9 +65,50 @@ def test_scalar_root_is_unsupported() -> None:
         _generate("01 X PIC 9(3).")
 
 
-def test_occurs_field_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
-        _generate("01 REC.\n  05 A PIC 9(1) OCCURS 3 TIMES.")
+def test_leaf_occurs_field_gets_an_indexed_accessor() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(1) OCCURS 3 TIMES.")["Rec"]
+    assert "public byte getA(int index) {" in out
+    assert "if (index < 0 || index >= 3) {" in out
+    assert (
+        'throw new IllegalArgumentException("A: index " + index + " out of range [0, 3)");'
+        in out
+    )
+    assert "int start = index * 1;" in out
+    assert "int end = start + 1;" in out
+
+
+def test_leaf_occurs_on_alpha_field_works() -> None:
+    out = _generate("01 REC.\n  05 A PIC X(2) OCCURS 3 TIMES.")["Rec"]
+    assert "public String getA(int index) {" in out
+    assert "bytes[i - start] = buf.get(i);" in out
+
+
+def test_leaf_occurs_on_big_integer_field_works() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A PIC S9(19) OCCURS 2 TIMES."), source_file="<t>")
+    report = recommend_mappings(dsl, "java")
+    resolved = resolve_mapping(report, Overrides())
+    out = generate_java_decoder(dsl, resolved)["Rec"]
+    assert "public java.math.BigInteger getA(int index) {" in out
+    assert "int start = index * 19;" in out
+
+
+def test_leaf_occurs_with_separate_sign_works() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(3) SIGN IS SEPARATE OCCURS 3 TIMES.")["Rec"]
+    assert "public short getA(int index) {" in out
+    assert "int sign = buf.get(end - 1) & 0xFF;" in out
+
+
+def test_occurs_field_with_redefines_still_rejected_for_redefines() -> None:
+    dsl = build_dsl(
+        parse_copybook(
+            "01 REC.\n  05 A PIC 9(3) OCCURS 3 TIMES.\n  05 B REDEFINES A PIC X(3) OCCURS 3 TIMES."
+        ),
+        source_file="<t>",
+    )
+    report = recommend_mappings(dsl, "java")
+    resolved = resolve_mapping(report, Overrides())
+    with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
+        generate_java_decoder(dsl, resolved)
 
 
 def test_redefines_field_is_unsupported() -> None:
@@ -100,9 +141,29 @@ def test_doubly_nested_group_preserves_absolute_offsets() -> None:
     assert "for (int i = 12; i < 14; i++)" in out  # MONTH
 
 
-def test_nested_occurs_group_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="OCCURS"):
-        _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")
+def test_occurs_group_gets_an_indexed_accessor_with_a_base_field() -> None:
+    out = _generate("01 REC.\n  05 GRP OCCURS 3 TIMES.\n    10 A PIC 9(1).")["Rec"]
+    assert "public Grp getGrp(int index) {" in out
+    assert "if (index < 0 || index >= 3) {" in out
+    assert "int newBase = index * 1;" in out
+    assert "return new Grp(buf, newBase);" in out
+    assert "public static class Grp {" in out
+    assert "private final int base;" in out
+    assert "Grp(java.nio.ByteBuffer buf, int base) {" in out
+    assert "public byte getA() {" in out
+    assert "int start = this.base;" in out
+
+
+def test_occurs_inside_occurs_rebases_independently_per_level() -> None:
+    out = _generate(
+        "01 REC.\n  05 OUTER OCCURS 2 TIMES.\n    10 INNER OCCURS 3 TIMES.\n      15 A PIC 9(1)."
+    )["Rec"]
+    assert "public Outer getOuter(int index) {" in out
+    assert "int newBase = index * 3;" in out
+    assert "public Inner getInner(int index) {" in out
+    assert "int newBase = this.base + index * 1;" in out
+    assert "public byte getA() {" in out
+    assert "int start = this.base;" in out
 
 
 def test_nested_redefines_group_is_unsupported() -> None:

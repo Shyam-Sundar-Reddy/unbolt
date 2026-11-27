@@ -118,6 +118,51 @@ JDK version, so this is a plain loop, not a bulk API call) and
 decodes it with `new String(bytes, CP037)`. Returns the exact
 fixed-width, space-padded text, matching decode_alpha()'s own default
 (no silent trailing-space stripping).
+
+Seventh slice: OCCURS, mirroring go_decoder.py's own seventh slice -
+leaf and group, one mechanism, same reasoning for doing both in one
+slice. This is the slice the third slice's own docstring predicted
+would need a per-instance `base` field, now built: every class that
+is ever reached through an OCCURS group gains a `private final int
+base` field (via a package-private `(ByteBuffer buf, int base)`
+constructor) meaning "what absolute index does this instance's own
+offset 0 correspond to" - `null`/absent everywhere else, so a class
+never reached through OCCURS keeps today's bare-absolute-offset
+scheme, unchanged, exactly as the third slice already established for
+plain nested groups. Entering an OCCURS group's children resets this
+to that group's own `node.offset`, however deep; a plain nested group
+passes whatever `base` it received straight through.
+
+Where Go's OCCURS slice needed zero runtime state (a reslice already
+puts byte 0 of a new slice at the right place), Java's `base` field
+*is* runtime state, because Java accessors never reslice - every
+accessor computes `int start = (this.base, if any) + <offset relative
+to the enclosing OCCURS group, baked as a literal> (+ index *
+byte_size, for the field's own OCCURS)`. That `start`/`end` pair is
+unknown at codegen time whenever a runtime index is in play, so every
+DISPLAY sign-placement body that does its own offset arithmetic
+(signed trailing overpunch, leading overpunch, either SIGN IS
+SEPARATE form) needed a *second*, parallel body generator - one
+written in terms of the literal int offsets (today's, untouched, so
+existing non-OCCURS output stays byte-for-byte identical), one
+written in terms of the `start`/`end` *local Java variables* the new
+preamble declares, doing its arithmetic as ordinary Java expressions
+(`end - 1`, `start + 1`) instead of Python-side integer math. The
+bodies with no such arithmetic (unsigned DISPLAY, COMP-3, BINARY, and
+their BigInteger equivalents) needed no second copy at all - they
+already just interpolate `start`/`end` wherever they appear, so
+passing the literal int or the string "start"/"end" produces correct
+Java either way.
+
+An OCCURS leaf gains an `int index` parameter and a bounds check
+(`IllegalArgumentException`, not a sentinel return - Java's unchecked
+exceptions mean there's no Go-style zero-value-plus-error to thread
+back, simplifying this relative to Go's own OCCURS slice). An OCCURS
+group gains the same bounds check and constructs the child with a
+freshly computed `newBase` - still one small heap allocation per
+call, as every nested-group accessor already was. Indexing is
+0-based, matching `generate_java()`'s own `[N]Type` array convention,
+same as Go's.
 """
 
 from unbolt.datatypes.sizing import (
@@ -319,7 +364,7 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
                 f"java decoder: root {root.name!r} must be a group in this slice"
             )
         needs: set[str] = set()
-        body = _render_class(root, root.name, resolved, needs, top_level=True)
+        body = _render_class(root, root.name, resolved, needs, top_level=True, base=None)
         helpers = []
         if "alpha" in needs:
             helpers.append(_CP037_CHARSET_FIELD)
@@ -348,6 +393,7 @@ def _render_class(
     needs: set[str],
     *,
     top_level: bool,
+    base: int | None,
 ) -> str:
     """Emits one class (the root, or a nested group) - its own
     constructor, one accessor per leaf field, and, for a nested-group
@@ -358,17 +404,21 @@ def _render_class(
     instance sharing the same buffer (one small allocation per call -
     a real, documented difference from Go's zero-allocation struct
     values, since Java has no equivalent value type).
+
+    base: what absolute offset this class's own buf[0] corresponds to
+        - None everywhere this class is reachable without ever
+          passing through an OCCURS group (no base field at all, the
+          original bare-absolute-offset scheme, unchanged); otherwise
+          the group's own node.offset once an OCCURS ancestor has been
+          entered - see the module docstring's OCCURS section.
     """
     class_name = go_field_name(node.name)
     keyword = "public class" if top_level else "public static class"
+    has_base_field = base is not None
 
     accessor_blocks: list[str] = []
     nested_bodies: list[str] = []
     for child in node.children:
-        if child.occurs is not None:
-            raise UnsupportedDecodeError(
-                f"java decoder: OCCURS field {child.name!r} isn't supported yet"
-            )
         if child.redefines is not None:
             raise UnsupportedDecodeError(
                 f"java decoder: REDEFINES field {child.name!r} isn't supported yet"
@@ -376,18 +426,32 @@ def _render_class(
         child_path = f"{field_path}.{child.name}"
         if child.pic is None and child.children:
             child_class_name = go_field_name(child.name)
-            nested_bodies.append(_render_class(child, child_path, resolved, needs, top_level=False))
+            child_base = child.offset if child.occurs is not None else base
+            nested_bodies.append(
+                _render_class(
+                    child, child_path, resolved, needs, top_level=False, base=child_base
+                )
+            )
             method_name, _ = java_field_name(child.name, source_line=child.source_line)
             getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
-            accessor_blocks.append(
-                f"public {child_class_name} {getter_name}() {{\n"
-                f"    return new {child_class_name}(buf);\n"
-                "}"
-            )
+            if child.occurs is not None:
+                accessor_blocks.append(
+                    _render_occurs_group_accessor(getter_name, child, base, child_class_name)
+                )
+            else:
+                ctor_args = "buf, this.base" if base is not None else "buf"
+                accessor_blocks.append(
+                    f"public {child_class_name} {getter_name}() {{\n"
+                    f"    return new {child_class_name}({ctor_args});\n"
+                    "}"
+                )
             continue
-        accessor_blocks.append(_render_leaf_accessor(child, child_path, resolved, needs))
+        accessor_blocks.append(_render_leaf_accessor(child, child_path, resolved, needs, base))
 
-    lines = [f"{keyword} {class_name} {{", "    private final java.nio.ByteBuffer buf;", ""]
+    lines = [f"{keyword} {class_name} {{", "    private final java.nio.ByteBuffer buf;"]
+    if has_base_field:
+        lines.append("    private final int base;")
+    lines.append("")
     if top_level:
         lines += [
             f"    public {class_name}(java.nio.ByteBuffer buf) {{",
@@ -396,6 +460,13 @@ def _render_class(
             f'{node.byte_size} bytes, got " + buf.capacity());',
             "        }",
             "        this.buf = buf;",
+            "    }",
+        ]
+    elif has_base_field:
+        lines += [
+            f"    {class_name}(java.nio.ByteBuffer buf, int base) {{",
+            "        this.buf = buf;",
+            "        this.base = base;",
             "    }",
         ]
     else:
@@ -414,12 +485,66 @@ def _render_class(
     return "\n".join(lines)
 
 
+def _render_occurs_group_accessor(
+    getter_name: str, node: FieldNode, base: int | None, child_class_name: str
+) -> str:
+    rel_start = node.offset - (base if base is not None else 0)
+    base_term = "this.base + " if base is not None else ""
+    rel_term = "" if rel_start == 0 else f"{rel_start} + "
+    return (
+        f"public {child_class_name} {getter_name}(int index) {{\n"
+        f"    if (index < 0 || index >= {node.occurs}) {{\n"
+        f'        throw new IllegalArgumentException("{node.name}: index " + index + '
+        f'" out of range [0, {node.occurs})");\n'
+        "    }\n"
+        f"    int newBase = {base_term}{rel_term}index * {node.byte_size};\n"
+        f"    return new {child_class_name}(buf, newBase);\n"
+        "}"
+    )
+
+
+def _runtime_position_preamble(
+    field_label: str, base: int | None, occurs: int | None, rel_start: int, byte_size: int
+) -> str:
+    """Declares local `start`/`end` variables an occurs-mode body reads
+    from, instead of the literal ints a non-runtime body bakes in
+    directly - see the module docstring's OCCURS section.
+    """
+    lines: list[str] = []
+    base_term = "this.base + " if base is not None else ""
+    if occurs is not None:
+        lines.append(f"    if (index < 0 || index >= {occurs}) {{")
+        lines.append(
+            f'        throw new IllegalArgumentException("{field_label}: index " + index + '
+            f'" out of range [0, {occurs})");'
+        )
+        lines.append("    }")
+        rel_term = "" if rel_start == 0 else f"{rel_start} + "
+        start_expr = f"{base_term}{rel_term}index * {byte_size}"
+    else:
+        # runtime with occurs is None only happens because base is not
+        # None (that's the only other way the caller's `runtime` check
+        # becomes true), so this.base is always valid here.
+        start_expr = f"this.base + {rel_start}" if rel_start != 0 else "this.base"
+    lines.append(f"    int start = {start_expr};")
+    lines.append(f"    int end = start + {byte_size};")
+    return "\n".join(lines) + "\n"
+
+
 def _render_leaf_accessor(
-    node: FieldNode, field_path: str, resolved: dict[str, str], needs: set[str]
+    node: FieldNode,
+    field_path: str,
+    resolved: dict[str, str],
+    needs: set[str],
+    base: int | None,
 ) -> str:
     if node.pic is None:
         raise UnsupportedDecodeError(
             f"java decoder: COMP-1/COMP-2 field {node.name!r} isn't supported yet"
+        )
+    if node.redefines is not None:
+        raise UnsupportedDecodeError(
+            f"java decoder: REDEFINES field {node.name!r} isn't supported yet"
         )
     if is_edited_pic(node.pic) or is_national_pic(node.pic):
         raise UnsupportedDecodeError(
@@ -428,7 +553,9 @@ def _render_leaf_accessor(
 
     method_name, _ = java_field_name(node.name, source_line=node.source_line)
     getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
-    start, end = node.offset, node.offset + node.byte_size
+    occurs = node.occurs
+    runtime = base is not None or occurs is not None
+    rel_start = node.offset - (base if base is not None else 0)
 
     if is_alpha_pic(node.pic):
         # Alphanumeric fields never go through mapping's integer
@@ -437,6 +564,11 @@ def _render_leaf_accessor(
         # checking is_alpha_pic first, before ever touching
         # resolved[field_path], is what avoids a KeyError here.
         needs.add("alpha")
+        if runtime:
+            return _render_alpha_accessor_occurs(
+                getter_name, base, occurs, rel_start, node.byte_size
+            )
+        start, end = node.offset, node.offset + node.byte_size
         return _render_alpha_accessor(getter_name, start, end)
 
     java_type = resolved[field_path]
@@ -447,8 +579,35 @@ def _render_leaf_accessor(
         )
 
     if java_type == _BIG_INTEGER_JAVA_TYPE:
-        return _render_bigint_leaf_accessor(node, getter_name, start, end, needs)
+        return _render_bigint_leaf_accessor(node, getter_name, base, occurs, rel_start, needs)
 
+    params = "int index" if occurs is not None else ""
+    if runtime:
+        preamble = _runtime_position_preamble(node.name, base, occurs, rel_start, node.byte_size)
+        if is_packed_usage(node.usage):
+            needs.add("packed")
+            body = _packed_body("start", "end", node.digits, java_type)
+        elif is_binary_usage(node.usage):
+            body = _binary_body("start", node.byte_size, node.signed, java_type)
+        elif node.usage.upper() == "DISPLAY":
+            if not node.signed:
+                body = _unsigned_display_body(node.name, "start", "end", java_type)
+            elif node.sign_separate:
+                body = _separate_sign_display_body_occurs(
+                    node.name, node.sign_leading, java_type
+                )
+            elif node.sign_leading:
+                body = _leading_overpunch_display_body_occurs(node.name, java_type)
+            else:
+                body = _signed_display_body_occurs(node.name, java_type)
+        else:
+            raise UnsupportedDecodeError(
+                f"java decoder: only DISPLAY/COMP-3/binary fields are supported in this "
+                f"slice, got {node.usage!r} for {node.name!r}"
+            )
+        return f"public {java_type} {getter_name}({params}) {{\n" + preamble + body + "}"
+
+    start, end = node.offset, node.offset + node.byte_size
     if is_packed_usage(node.usage):
         needs.add("packed")
         body = _packed_body(start, end, node.digits, java_type)
@@ -458,9 +617,7 @@ def _render_leaf_accessor(
         if not node.signed:
             body = _unsigned_display_body(node.name, start, end, java_type)
         elif node.sign_separate:
-            body = _separate_sign_display_body(
-                node.name, start, end, node.sign_leading, java_type
-            )
+            body = _separate_sign_display_body(node.name, start, end, node.sign_leading, java_type)
         elif node.sign_leading:
             body = _leading_overpunch_display_body(node.name, start, end, java_type)
         else:
@@ -488,9 +645,57 @@ def _render_alpha_accessor(getter_name: str, start: int, end: int) -> str:
     )
 
 
-def _render_bigint_leaf_accessor(
-    node: FieldNode, getter_name: str, start: int, end: int, needs: set[str]
+def _render_alpha_accessor_occurs(
+    getter_name: str, base: int | None, occurs: int | None, rel_start: int, byte_size: int
 ) -> str:
+    preamble = _runtime_position_preamble(getter_name, base, occurs, rel_start, byte_size)
+    params = "int index" if occurs is not None else ""
+    return (
+        f"public String {getter_name}({params}) {{\n"
+        + preamble
+        + f"    byte[] bytes = new byte[{byte_size}];\n"
+        "    for (int i = start; i < end; i++) {\n"
+        "        bytes[i - start] = buf.get(i);\n"
+        "    }\n"
+        "    return new String(bytes, CP037);\n"
+        "}"
+    )
+
+
+def _render_bigint_leaf_accessor(
+    node: FieldNode,
+    getter_name: str,
+    base: int | None,
+    occurs: int | None,
+    rel_start: int,
+    needs: set[str],
+) -> str:
+    runtime = base is not None or occurs is not None
+    params = "int index" if occurs is not None else ""
+
+    if runtime:
+        preamble = _runtime_position_preamble(node.name, base, occurs, rel_start, node.byte_size)
+        if is_packed_usage(node.usage):
+            needs.add("bigint_packed")
+            body = _packed_body_big("start", "end", node.digits)
+        elif node.usage.upper() == "DISPLAY":
+            needs.add("bigint_display")
+            if not node.signed:
+                body = _unsigned_display_body_big("start", "end")
+            elif node.sign_separate:
+                body = _separate_sign_display_body_big_occurs(node.name, node.sign_leading)
+            elif node.sign_leading:
+                body = _leading_overpunch_display_body_big_occurs(node.name)
+            else:
+                body = _signed_display_body_big_occurs(node.name)
+        else:
+            raise UnsupportedDecodeError(
+                f"java decoder: BigInteger is only supported for DISPLAY/COMP-3 fields in "
+                f"this slice, got {node.usage!r} for {node.name!r}"
+            )
+        return f"public java.math.BigInteger {getter_name}({params}) {{\n" + preamble + body + "}"
+
+    start, end = node.offset, node.offset + node.byte_size
     if is_packed_usage(node.usage):
         needs.add("bigint_packed")
         body = _packed_body_big(start, end, node.digits)
@@ -512,7 +717,7 @@ def _render_bigint_leaf_accessor(
     return f"public java.math.BigInteger {getter_name}() {{\n" + body + "}"
 
 
-def _unsigned_display_body_big(start: int, end: int) -> str:
+def _unsigned_display_body_big(start: int | str, end: int | str) -> str:
     return f"    return decodeDisplayDigitsBig(buf, {start}, {end});\n"
 
 
@@ -595,11 +800,90 @@ def _separate_sign_display_body_big(
     )
 
 
-def _packed_body_big(start: int, end: int, digits: int) -> str:
+def _signed_display_body_big_occurs(field_label: str) -> str:
+    return (
+        "    java.math.BigInteger v = decodeDisplayDigitsBig(buf, start, end - 1);\n"
+        "    int last = buf.get(end - 1) & 0xFF;\n"
+        "    int zone = last & 0xF0;\n"
+        "    int digit = last & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    v = v.multiply(java.math.BigInteger.TEN).add(java.math.BigInteger.valueOf(digit));\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        "    return v;\n"
+    )
+
+
+def _leading_overpunch_display_body_big_occurs(field_label: str) -> str:
+    return (
+        "    int first = buf.get(start) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    java.math.BigInteger tail = decodeDisplayDigitsBig(buf, start + 1, end);\n"
+        "    java.math.BigInteger scale = java.math.BigInteger.TEN.pow(end - start - 1);\n"
+        "    java.math.BigInteger v = java.math.BigInteger.valueOf(digit).multiply(scale)"
+        ".add(tail);\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        "    return v;\n"
+    )
+
+
+def _separate_sign_display_body_big_occurs(field_label: str, sign_leading: bool) -> str:
+    if sign_leading:
+        sign_expr, digits_start, digits_end = "start", "start + 1", "end"
+    else:
+        sign_expr, digits_start, digits_end = "end - 1", "start", "end - 1"
+    return (
+        f"    int sign = buf.get({sign_expr}) & 0xFF;\n"
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {digits_start}, "
+        f"{digits_end});\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        "            return v;\n"
+        "        case 0x60:\n"
+        "            return v.negate();\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
+    )
+
+
+def _packed_body_big(start: int | str, end: int | str, digits: int) -> str:
     return f"    return decodePackedDecimalBig(buf, {start}, {end}, {digits});\n"
 
 
-def _unsigned_display_body(field_label: str, start: int, end: int, java_type: str) -> str:
+def _unsigned_display_body(
+    field_label: str, start: int | str, end: int | str, java_type: str
+) -> str:
     return (
         "    long v = 0;\n"
         f"    for (int i = {start}; i < {end}; i++) {{\n"
@@ -713,14 +997,111 @@ def _separate_sign_display_body(
     )
 
 
-def _packed_body(start: int, end: int, digits: int, java_type: str) -> str:
+def _signed_display_body_occurs(field_label: str, java_type: str) -> str:
+    return (
+        "    long v = 0;\n"
+        "    for (int i = start; i < end - 1; i++) {\n"
+        "        int b = buf.get(i) & 0xFF;\n"
+        "        if (b < 0xF0 || b > 0xF9) {\n"
+        f'            throw new IllegalArgumentException("{field_label}: byte " + '
+        'String.format("0x%02X", b) + " is not a DISPLAY digit");\n'
+        "        }\n"
+        "        v = v * 10 + (b & 0x0F);\n"
+        "    }\n"
+        "    int last = buf.get(end - 1) & 0xFF;\n"
+        "    int zone = last & 0xF0;\n"
+        "    int digit = last & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    v = v * 10 + digit;\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = -v;\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return ({java_type}) v;\n"
+    )
+
+
+def _leading_overpunch_display_body_occurs(field_label: str, java_type: str) -> str:
+    return (
+        "    int first = buf.get(start) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    long v = digit;\n"
+        "    for (int i = start + 1; i < end; i++) {\n"
+        "        int b = buf.get(i) & 0xFF;\n"
+        "        if (b < 0xF0 || b > 0xF9) {\n"
+        f'            throw new IllegalArgumentException("{field_label}: byte " + '
+        'String.format("0x%02X", b) + " is not a DISPLAY digit");\n'
+        "        }\n"
+        "        v = v * 10 + (b & 0x0F);\n"
+        "    }\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = -v;\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return ({java_type}) v;\n"
+    )
+
+
+def _separate_sign_display_body_occurs(field_label: str, sign_leading: bool, java_type: str) -> str:
+    if sign_leading:
+        sign_expr, digits_start, digits_end = "start", "start + 1", "end"
+    else:
+        sign_expr, digits_start, digits_end = "end - 1", "start", "end - 1"
+    return (
+        f"    int sign = buf.get({sign_expr}) & 0xFF;\n"
+        "    long v = 0;\n"
+        f"    for (int i = {digits_start}; i < {digits_end}; i++) {{\n"
+        "        int b = buf.get(i) & 0xFF;\n"
+        "        if (b < 0xF0 || b > 0xF9) {\n"
+        f'            throw new IllegalArgumentException("{field_label}: byte " + '
+        'String.format("0x%02X", b) + " is not a DISPLAY digit");\n'
+        "        }\n"
+        "        v = v * 10 + (b & 0x0F);\n"
+        "    }\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        f"            return ({java_type}) v;\n"
+        "        case 0x60:\n"
+        f"            return ({java_type}) (-v);\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
+    )
+
+
+def _packed_body(start: int | str, end: int | str, digits: int, java_type: str) -> str:
     return (
         f"    long v = decodePackedDecimal(buf, {start}, {end}, {digits});\n"
         f"    return ({java_type}) v;\n"
     )
 
 
-def _binary_body(start: int, byte_size: int, signed: bool, java_type: str) -> str:
+def _binary_body(start: int | str, byte_size: int, signed: bool, java_type: str) -> str:
     reader = _BINARY_WIDTH_READER[byte_size]
     native_type = _BINARY_NATIVE_TYPE[byte_size]
     # Java has no unsigned primitives, so an unsigned field's resolved

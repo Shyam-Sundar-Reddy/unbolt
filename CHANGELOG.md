@@ -422,6 +422,33 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   actually run inside a real `eclipse-temurin:21-jdk` JVM. 3 new tests
   (net, after retiring the now-obsolete "alphanumeric isn't supported"
   test and adding four real ones).
+- Phase 10, fifteenth slice: `OCCURS` for the Java flyweight decoder,
+  mirroring `go_decoder.py`'s own seventh slice - leaf and group in
+  one slice, one mechanism. Every class ever reached through an
+  `OCCURS` group gains a `private final int base` field (via a
+  package-private `(ByteBuffer buf, int base)` constructor); a class
+  never reached through `OCCURS` keeps the bare-absolute-offset
+  scheme unchanged - confirmed by direct comparison that existing
+  non-`OCCURS` output stays byte-for-byte identical. Unlike Go, where
+  a reslice already puts byte 0 of a new slice at the right place
+  with zero runtime state, Java's `base` field *is* runtime state,
+  since Java accessors never reslice - so every DISPLAY sign-placement
+  body with its own offset arithmetic needed a second, parallel body
+  generator written in terms of runtime `start`/`end` local variables
+  instead of codegen-time literals; bodies with no such arithmetic
+  needed no second copy at all. An `OCCURS` leaf gains an `int index`
+  parameter and a bounds check (`IllegalArgumentException`, no
+  sentinel return needed, unlike Go's own `(zero, error)` shape); an
+  `OCCURS` group gains the same bounds check and constructs the child
+  with a freshly computed `newBase`. Composes correctly for `OCCURS`
+  nested inside `OCCURS`, verified by hand before trusting it.
+  `tools/compile_check` gained a seventh Java decoder round-trip,
+  reusing the real `occurs_table.cpy` fixture and the exact bytes
+  already cross-checked for the Go decoder's own equivalent
+  round-trip, including an out-of-range index, built and actually run
+  inside a real `eclipse-temurin:21-jdk` JVM. 5 new tests (net, after
+  retiring two now-obsolete "OCCURS isn't supported" tests and adding
+  seven real ones).
 
 ## [0.1.1] - Released 2026-10-25
 
