@@ -78,6 +78,29 @@ a fresh instance sharing the same buf - one small heap allocation per
 call, unlike Go's zero-allocation struct values (the real,
 documented difference this module's own opening paragraph already
 names). No base field needed yet, as explained above.
+
+Fourth slice: SIGN IS SEPARATE/LEADING, mirroring go_decoder.py's own
+fourth slice - leading overpunch and both separate-sign forms get
+their own body generator, same as Go's.
+
+Fifth slice: BigInteger/wider types, mirroring go_decoder.py's own
+fifth slice. Reachable the same way Go's big.Int is: never decision
+0004's default (java_rules.py's own ladder tops out at long before
+BigInteger), but reachable past long's ~19-digit range, or via a
+forced override. Shared helpers (decodeDisplayDigitsBig,
+decodePackedDecimalBig) use java.math.BigInteger - immutable, unlike
+Go's mutable big.Int, so every operation reassigns `v` instead of
+mutating it in place, but the arithmetic itself is an unchanged port.
+One genuine simplification over Go here: a helper that hits bad input
+just throws IllegalArgumentException directly (unchecked) and lets it
+propagate - there's no Go-style explicit (value, error) return to
+thread back up through every caller, so every BigInteger accessor's
+body is a single expression or a short switch, never an explicit
+error check. BINARY never needs BigInteger, for the exact same reason
+established in the second slice above (every BINARY tier's digit
+ceiling already fits within its own native signed type) - a forced
+BigInteger override on a binary field still raises rather than
+guessing.
 """
 
 from unbolt.datatypes.sizing import (
@@ -92,9 +115,90 @@ from unbolt.exceptions import UnsupportedDecodeError
 from unbolt.generators.naming import go_field_name, java_field_name
 
 _INTEGER_JAVA_TYPES = frozenset({"byte", "short", "int", "long"})
+_BIG_INTEGER_JAVA_TYPE = "BigInteger"
 _BINARY_WIDTH_READER = {2: "getShort", 4: "getInt", 8: "getLong"}
 _BINARY_NATIVE_TYPE = {2: "short", 4: "int", 8: "long"}
 _UNSIGNED_WIDEN_MASK = {2: "0xFFFF", 4: "0xFFFFFFFFL"}
+
+_DISPLAY_DIGITS_BIG_HELPER = """private static java.math.BigInteger decodeDisplayDigitsBig(
+        java.nio.ByteBuffer buf, int start, int end) {
+    java.math.BigInteger v = java.math.BigInteger.ZERO;
+    java.math.BigInteger ten = java.math.BigInteger.TEN;
+    for (int i = start; i < end; i++) {
+        int b = buf.get(i) & 0xFF;
+        if (b < 0xF0 || b > 0xF9) {
+            throw new IllegalArgumentException(
+                "byte " + String.format("0x%02X", b) + " is not a DISPLAY digit");
+        }
+        v = v.multiply(ten).add(java.math.BigInteger.valueOf(b & 0x0F));
+    }
+    return v;
+}"""
+
+_PACKED_DECIMAL_BIG_HELPER = """private static java.math.BigInteger decodePackedDecimalBig(
+        java.nio.ByteBuffer buf, int start, int end, int digits) {
+    int totalNibbles = (end - start) * 2;
+    int pad = totalNibbles - 1 - digits;
+    java.math.BigInteger v = java.math.BigInteger.ZERO;
+    java.math.BigInteger ten = java.math.BigInteger.TEN;
+    boolean negative = false;
+    int nibbleIndex = 0;
+    for (int pos = start; pos < end; pos++) {
+        int b = buf.get(pos) & 0xFF;
+
+        int hi = b >> 4;
+        if (nibbleIndex == totalNibbles - 1) {
+            if (hi == 0xC || hi == 0xF) {
+                // positive
+            } else if (hi == 0xD) {
+                negative = true;
+            } else {
+                throw new IllegalArgumentException(
+                    "packed decimal: unrecognized sign nibble " + String.format("0x%X", hi));
+            }
+        } else if (nibbleIndex < pad) {
+            if (hi != 0) {
+                throw new IllegalArgumentException(
+                    "packed decimal: non-zero leading pad nibble " + String.format("0x%X", hi));
+            }
+        } else {
+            if (hi > 9) {
+                throw new IllegalArgumentException(
+                    "packed decimal: non-digit nibble " + String.format("0x%X", hi));
+            }
+            v = v.multiply(ten).add(java.math.BigInteger.valueOf(hi));
+        }
+        nibbleIndex++;
+
+        int lo = b & 0x0F;
+        if (nibbleIndex == totalNibbles - 1) {
+            if (lo == 0xC || lo == 0xF) {
+                // positive
+            } else if (lo == 0xD) {
+                negative = true;
+            } else {
+                throw new IllegalArgumentException(
+                    "packed decimal: unrecognized sign nibble " + String.format("0x%X", lo));
+            }
+        } else if (nibbleIndex < pad) {
+            if (lo != 0) {
+                throw new IllegalArgumentException(
+                    "packed decimal: non-zero leading pad nibble " + String.format("0x%X", lo));
+            }
+        } else {
+            if (lo > 9) {
+                throw new IllegalArgumentException(
+                    "packed decimal: non-digit nibble " + String.format("0x%X", lo));
+            }
+            v = v.multiply(ten).add(java.math.BigInteger.valueOf(lo));
+        }
+        nibbleIndex++;
+    }
+    if (negative) {
+        v = v.negate();
+    }
+    return v;
+}"""
 
 _PACKED_DECIMAL_HELPER = """private static long decodePackedDecimal(
         java.nio.ByteBuffer buf, int start, int end, int digits) {
@@ -194,13 +298,19 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
             )
         needs: set[str] = set()
         body = _render_class(root, root.name, resolved, needs, top_level=True)
+        helpers = []
         if "packed" in needs:
+            helpers.append(_PACKED_DECIMAL_HELPER)
+        if "bigint_display" in needs:
+            helpers.append(_DISPLAY_DIGITS_BIG_HELPER)
+        if "bigint_packed" in needs:
+            helpers.append(_PACKED_DECIMAL_BIG_HELPER)
+        if helpers:
             lines = body.splitlines()
             closing_brace = lines.pop()
-            lines.append("")
-            lines.extend(
-                f"    {line}" if line else "" for line in _PACKED_DECIMAL_HELPER.splitlines()
-            )
+            for helper in helpers:
+                lines.append("")
+                lines.extend(f"    {line}" if line else "" for line in helper.splitlines())
             lines.append(closing_brace)
             body = "\n".join(lines)
         result[go_field_name(root.name)] = body + "\n"
@@ -293,15 +403,18 @@ def _render_leaf_accessor(
         )
 
     java_type = resolved[field_path]
-    if java_type not in _INTEGER_JAVA_TYPES:
+    if java_type != _BIG_INTEGER_JAVA_TYPE and java_type not in _INTEGER_JAVA_TYPES:
         raise UnsupportedDecodeError(
             f"java decoder: resolved type {java_type!r} for {field_path!r} isn't supported "
-            "in this slice (only byte/short/int/long)"
+            "in this slice (only byte/short/int/long/BigInteger)"
         )
 
     method_name, _ = java_field_name(node.name, source_line=node.source_line)
     getter_name = f"get{method_name[0].upper()}{method_name[1:]}"
     start, end = node.offset, node.offset + node.byte_size
+
+    if java_type == _BIG_INTEGER_JAVA_TYPE:
+        return _render_bigint_leaf_accessor(node, getter_name, start, end, needs)
 
     if is_packed_usage(node.usage):
         needs.add("packed")
@@ -326,6 +439,117 @@ def _render_leaf_accessor(
         )
 
     return f"public {java_type} {getter_name}() {{\n" + body + "}"
+
+
+def _render_bigint_leaf_accessor(
+    node: FieldNode, getter_name: str, start: int, end: int, needs: set[str]
+) -> str:
+    if is_packed_usage(node.usage):
+        needs.add("bigint_packed")
+        body = _packed_body_big(start, end, node.digits)
+    elif node.usage.upper() == "DISPLAY":
+        needs.add("bigint_display")
+        if not node.signed:
+            body = _unsigned_display_body_big(start, end)
+        elif node.sign_separate:
+            body = _separate_sign_display_body_big(node.name, start, end, node.sign_leading)
+        elif node.sign_leading:
+            body = _leading_overpunch_display_body_big(node.name, start, end)
+        else:
+            body = _signed_display_body_big(node.name, start, end)
+    else:
+        raise UnsupportedDecodeError(
+            f"java decoder: BigInteger is only supported for DISPLAY/COMP-3 fields in "
+            f"this slice, got {node.usage!r} for {node.name!r}"
+        )
+    return f"public java.math.BigInteger {getter_name}() {{\n" + body + "}"
+
+
+def _unsigned_display_body_big(start: int, end: int) -> str:
+    return f"    return decodeDisplayDigitsBig(buf, {start}, {end});\n"
+
+
+def _signed_display_body_big(field_label: str, start: int, end: int) -> str:
+    return (
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {start}, {end - 1});\n"
+        f"    int last = buf.get({end - 1}) & 0xFF;\n"
+        "    int zone = last & 0xF0;\n"
+        "    int digit = last & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    v = v.multiply(java.math.BigInteger.TEN).add(java.math.BigInteger.valueOf(digit));\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        "    return v;\n"
+    )
+
+
+def _leading_overpunch_display_body_big(field_label: str, start: int, end: int) -> str:
+    return (
+        f"    int first = buf.get({start}) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        f"    java.math.BigInteger tail = decodeDisplayDigitsBig(buf, {start + 1}, {end});\n"
+        f"    java.math.BigInteger scale = java.math.BigInteger.TEN.pow({end - start - 1});\n"
+        "    java.math.BigInteger v = java.math.BigInteger.valueOf(digit).multiply(scale)"
+        ".add(tail);\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        "    return v;\n"
+    )
+
+
+def _separate_sign_display_body_big(
+    field_label: str, start: int, end: int, sign_leading: bool
+) -> str:
+    if sign_leading:
+        sign_pos, digits_start, digits_end = start, start + 1, end
+    else:
+        sign_pos, digits_start, digits_end = end - 1, start, end - 1
+    return (
+        f"    int sign = buf.get({sign_pos}) & 0xFF;\n"
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {digits_start}, "
+        f"{digits_end});\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        "            return v;\n"
+        "        case 0x60:\n"
+        "            return v.negate();\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
+    )
+
+
+def _packed_body_big(start: int, end: int, digits: int) -> str:
+    return f"    return decodePackedDecimalBig(buf, {start}, {end}, {digits});\n"
 
 
 def _unsigned_display_body(field_label: str, start: int, end: int, java_type: str) -> str:

@@ -201,9 +201,54 @@ def test_leading_separate_sign_decodes() -> None:
     assert "for (int i = 1; i < 4; i++) {" in out
 
 
-def test_big_integer_resolved_type_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="isn't supported in this slice"):
-        _generate("01 REC.\n  05 A PIC S9(19).")
+def test_unsigned_big_integer_field_decodes_via_the_shared_display_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(20).")["Rec"]
+    assert "public java.math.BigInteger getA() {" in out
+    assert "return decodeDisplayDigitsBig(buf, 0, 20);" in out
+    assert "private static java.math.BigInteger decodeDisplayDigitsBig(" in out
+    assert "decodePackedDecimalBig" not in out
+
+
+def test_trailing_overpunch_big_integer_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19).")["Rec"]
+    assert "public java.math.BigInteger getA() {" in out
+    assert "decodeDisplayDigitsBig(buf, 0, 18)" in out
+    assert "v = v.negate();" in out
+
+
+def test_leading_overpunch_big_integer_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS LEADING.")["Rec"]
+    assert "java.math.BigInteger tail = decodeDisplayDigitsBig(buf, 1, 19);" in out
+    assert "java.math.BigInteger scale = java.math.BigInteger.TEN.pow(18);" in out
+
+
+def test_trailing_separate_sign_big_integer_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS SEPARATE.")["Rec"]
+    assert "int sign = buf.get(19) & 0xFF;" in out
+    assert "case 0x60:\n                return v.negate();" in out
+
+
+def test_leading_separate_sign_big_integer_field_decodes() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) SIGN IS LEADING SEPARATE.")["Rec"]
+    assert "int sign = buf.get(0) & 0xFF;" in out
+
+
+def test_packed_big_integer_field_decodes_via_the_shared_packed_helper() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(19) COMP-3.")["Rec"]
+    assert "return decodePackedDecimalBig(buf, 0, 10, 19);" in out
+    assert "private static java.math.BigInteger decodePackedDecimalBig(" in out
+    assert "decodeDisplayDigitsBig" not in out
+
+
+def test_big_integer_binary_field_is_unsupported() -> None:
+    dsl = build_dsl(parse_copybook("01 REC.\n  05 A PIC S9(3) COMP."), source_file="<test>")
+    report = recommend_mappings(dsl, "java")
+    overrides = apply_override(
+        Overrides(), "REC.A", "BigInteger", "forced", valid_choices=["BigInteger"], force=True
+    )
+    resolved = resolve_mapping(report, overrides)
+    with pytest.raises(UnsupportedDecodeError, match="only supported for DISPLAY/COMP-3"):
+        generate_java_decoder(dsl, resolved)
 
 
 def test_decimal_field_resolving_to_bigdecimal_is_unsupported() -> None:

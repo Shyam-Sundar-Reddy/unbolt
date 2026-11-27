@@ -386,6 +386,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   real `eclipse-temurin:21-jdk` JVM. 1 new test (net, after retiring
   two now-obsolete "SIGN IS SEPARATE/LEADING isn't supported" tests
   and adding three real ones).
+- Phase 10, thirteenth slice: `BigInteger`/wider types for the Java
+  flyweight decoder, mirroring `go_decoder.py`'s own fifth slice - no
+  new design question turned up porting it. Shared helpers
+  (`decodeDisplayDigitsBig`, `decodePackedDecimalBig`) use
+  `java.math.BigInteger` - immutable, unlike Go's mutable `big.Int`,
+  so every arithmetic step reassigns `v` instead of mutating it, but
+  the logic is an unchanged port. One genuine simplification over Go:
+  a helper that hits bad input just throws `IllegalArgumentException`
+  directly and lets it propagate, so every `BigInteger` accessor's
+  body is a single expression or a short switch, never an explicit
+  Go-style error check. `BigInteger` on a binary field still raises,
+  for the same reason established in the tenth slice. `tools/compile_check`
+  gained a fifth Java decoder round-trip, reusing the Go decoder's own
+  `_BIGINT_SOURCE` and already-verified bytes directly, built and
+  actually run inside a real `eclipse-temurin:21-jdk` JVM. 6 new tests
+  (net, after retiring the now-obsolete "BigInteger isn't supported"
+  test and adding seven real ones).
 
 ## [0.1.1] - Released 2026-10-25
 

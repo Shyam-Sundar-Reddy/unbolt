@@ -604,6 +604,56 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, fifth slice: BigInteger/wider types - reuses
+# _BIGINT_SOURCE and its already-verified bytes directly from the Go
+# decoder's own big.Int round-trip above.
+_JAVA_BIGINT_MAIN = """import java.math.BigInteger;
+import java.nio.ByteBuffer;
+
+public class Main {
+\tprivate static void check(String name, BigInteger got, String want) {
+\t\tif (!got.toString().equals(want)) {
+\t\t\tthrow new RuntimeException(name + ": got " + got + ", want " + want);
+\t\t}
+\t}
+
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5,
+\t\t\t(byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9, (byte) 0xF0,
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5,
+\t\t\t(byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9, (byte) 0xF0,
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5,
+\t\t\t(byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9, (byte) 0xF0,
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5,
+\t\t\t(byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xD9,
+\t\t\t(byte) 0xD9, (byte) 0xF8, (byte) 0xF7, (byte) 0xF6, (byte) 0xF5,
+\t\t\t(byte) 0xF4, (byte) 0xF3, (byte) 0xF2, (byte) 0xF1, (byte) 0xF0,
+\t\t\t(byte) 0xF9, (byte) 0xF8, (byte) 0xF7, (byte) 0xF6, (byte) 0xF5,
+\t\t\t(byte) 0xF4, (byte) 0xF3, (byte) 0xF2, (byte) 0xF1,
+\t\t\t(byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1,
+\t\t\t(byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1,
+\t\t\t(byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1,
+\t\t\t(byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0x4E,
+\t\t\t(byte) 0x60, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0x99, (byte) 0x99, (byte) 0x99, (byte) 0x99, (byte) 0x99,
+\t\t\t(byte) 0x99, (byte) 0x99, (byte) 0x99, (byte) 0x99, (byte) 0x9C,
+\t\t};
+\t\tRec r = new Rec(ByteBuffer.wrap(data));
+\t\tcheck("UnsignedBig", r.getUnsignedBig(), "12345678901234567890");
+\t\tcheck("TrailingOvpBig", r.getTrailingOvpBig(), "-1234567890123456789");
+\t\tcheck("LeadingOvpBig", r.getLeadingOvpBig(), "-9876543210987654321");
+\t\tcheck("TrailingSepBig", r.getTrailingSepBig(), "1111111111111111111");
+\t\tcheck("LeadingSepBig", r.getLeadingSepBig(), "-2222222222222222222");
+\t\tcheck("PackedBig", r.getPackedBig(), "9999999999999999999");
+\t\tSystem.out.println("bigint Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path, label: str, source: str, java_main: str
@@ -799,18 +849,20 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth-twelfth slices):
-    # same real round-trip discipline as the Go decoder above - the
-    # running binary must decode to the exact values Python's own
-    # decode_record() already verified. Four cases: a synthetic flat
-    # DISPLAY-only record (flat_display.cpy's own two integer fields,
-    # minus its decimal ACCOUNT-BALANCE field, out of scope), a
-    # synthetic DISPLAY+COMP-3+binary record including an unsigned
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth-thirteenth
+    # slices): same real round-trip discipline as the Go decoder above
+    # - the running binary must decode to the exact values Python's
+    # own decode_record() already verified. Five cases: a synthetic
+    # flat DISPLAY-only record (flat_display.cpy's own two integer
+    # fields, minus its decimal ACCOUNT-BALANCE field, out of scope),
+    # a synthetic DISPLAY+COMP-3+binary record including an unsigned
     # 8-byte BINARY field, a synthetic record mirroring
-    # nested_groups.cpy two levels deep, and a synthetic record
-    # covering all three non-default sign placements, reusing
-    # _SIGN_PLACEMENTS_SOURCE and its bytes directly from the Go
-    # decoder's own equivalent round-trip above.
+    # nested_groups.cpy two levels deep, a synthetic record covering
+    # all three non-default sign placements, and a synthetic record
+    # covering BigInteger across every supported usage/sign placement
+    # - the last two reuse _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE and
+    # their bytes directly from the Go decoder's own equivalent
+    # round-trips above.
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
@@ -822,6 +874,9 @@ def main() -> int:
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "sign_placements", _SIGN_PLACEMENTS_SOURCE, _JAVA_SIGN_PLACEMENTS_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "bigint", _BIGINT_SOURCE, _JAVA_BIGINT_MAIN,
     )
 
     shutil.rmtree(out_dir)

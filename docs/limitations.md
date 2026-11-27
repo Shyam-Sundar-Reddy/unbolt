@@ -254,27 +254,44 @@ dropped — never silently misconverted:
   tracking is needed for plain nested groups the way it eventually
   will be for `OCCURS` (where a runtime index genuinely shifts the
   position; a static nested group's position is fully known at
-  codegen time, so there's nothing to track at runtime). Not yet
-  supported — each raises `UnsupportedDecodeError` rather than
-  guessing: a scalar (non-group) root; `OCCURS`; `REDEFINES`;
-  `COMP-1`/`COMP-2`; alphanumeric/edited/national fields; and any
-  resolved Java type outside the plain `byte`/`short`/`int`/`long`
-  ladder — `BigInteger` (the ladder's own next step up), `BigDecimal`
-  (every decimal/scaled field's resolved type for Java — no analogue
-  to Go's scaled-`int64` marker exists here, so this is a different,
-  still-open design question, not a mechanical lift), and `String`
-  (a forced override). Verified with real round-trips, not just
-  compile checks: `tools/compile_check` builds, **runs**, and asserts
-  decoded values from four generated decoders (a synthetic flat
-  `DISPLAY`-only record reusing `flat_display.cpy`'s own two integer
-  fields, minus its decimal `ACCOUNT-BALANCE` field, which is out of
-  this slice's scope; a synthetic `DISPLAY`+`COMP-3`+binary record
-  including that unsigned 8-byte `BINARY` field; a synthetic record
-  mirroring `nested_groups.cpy` two levels deep; and a synthetic
-  record covering all three non-default sign placements, reusing the
-  Go decoder's own `sign_placements` source and bytes directly) inside
-  a real JVM (`eclipse-temurin:21-jdk`), cross-checked against
-  Python's own `decode_record()` first.
+  codegen time, so there's nothing to track at runtime). A resolved
+  `BigInteger` field (never decision 0004's default — `java_rules.py`'s
+  own ladder tops out at `long` — but reachable past `long`'s own
+  ~19-digit range, or via a forced override) reuses the same
+  DISPLAY/`COMP-3` dispatch with `java.math.BigInteger` arithmetic and
+  its own shared helpers (`decodeDisplayDigitsBig`,
+  `decodePackedDecimalBig`) — a direct port of Go's own big.Int logic,
+  except every operation reassigns `v` instead of mutating it in
+  place, since `BigInteger` (unlike Go's `big.Int`) is immutable. A
+  helper that hits bad input just throws `IllegalArgumentException`
+  directly and lets it propagate — there's no Go-style explicit
+  `(value, error)` return to thread back up through every caller, so
+  every `BigInteger` accessor's body is a single expression or a short
+  switch, never an explicit error check. `BigInteger` on a binary
+  field raises rather than guessing, for the same reason established
+  above (every `BINARY` tier's digit ceiling already fits within its
+  own native signed type). Not yet supported — each raises
+  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
+  root; `OCCURS`; `REDEFINES`; `COMP-1`/`COMP-2`; alphanumeric/edited/
+  national fields; `BigInteger` on a binary field; and any other
+  resolved Java type outside the plain `byte`/`short`/`int`/`long`/
+  `BigInteger` set — `BigDecimal` (every decimal/scaled field's
+  resolved type for Java — no analogue to Go's scaled-`int64` marker
+  exists here, so this is a different, still-open design question,
+  not a mechanical lift), and `String` (a forced override). Verified
+  with real round-trips, not just compile checks: `tools/compile_check`
+  builds, **runs**, and asserts decoded values from five generated
+  decoders (a synthetic flat `DISPLAY`-only record reusing
+  `flat_display.cpy`'s own two integer fields, minus its decimal
+  `ACCOUNT-BALANCE` field, which is out of this slice's scope; a
+  synthetic `DISPLAY`+`COMP-3`+binary record including that unsigned
+  8-byte `BINARY` field; a synthetic record mirroring
+  `nested_groups.cpy` two levels deep; a synthetic record covering all
+  three non-default sign placements; and a synthetic record covering
+  `BigInteger` across every supported usage/sign placement — the last
+  two reusing the Go decoder's own `sign_placements`/`bigint` sources
+  and bytes directly) inside a real JVM (`eclipse-temurin:21-jdk`),
+  cross-checked against Python's own `decode_record()` first.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 
