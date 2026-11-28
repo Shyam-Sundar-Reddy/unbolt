@@ -2,7 +2,11 @@ import pytest
 
 from unbolt.dsl import build_dsl
 from unbolt.exceptions import UnsupportedDecodeError
-from unbolt.generators.java_decoder import generate_java_decoder
+from unbolt.generators.java_decoder import (
+    RedefinesDispatch,
+    RedefinesRule,
+    generate_java_decoder,
+)
 from unbolt.generators.resolve import resolve_mapping
 from unbolt.mapping import recommend_mappings
 from unbolt.overrides import Overrides, apply_override
@@ -114,6 +118,125 @@ def test_occurs_field_with_redefines_still_rejected_for_redefines() -> None:
 def test_redefines_field_is_unsupported() -> None:
     with pytest.raises(UnsupportedDecodeError, match="REDEFINES"):
         _generate("01 REC.\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).")
+
+
+def _generate_with_redefines(source: str, redefines: dict[str, RedefinesDispatch]) -> str:
+    dsl = build_dsl(parse_copybook(source), source_file="<test>")
+    resolved = resolve_mapping(recommend_mappings(dsl, "java"), Overrides())
+    return generate_java_decoder(dsl, resolved, redefines=redefines)["Rec"]
+
+
+def test_redefines_dispatch_emits_a_sealed_interface_and_a_dispatcher() -> None:
+    out = _generate_with_redefines(
+        "01 REC.\n  05 T PIC X(1).\n  05 A.\n    10 X PIC 9(3).\n"
+        "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+        {
+            "A": RedefinesDispatch(
+                discriminator="T",
+                rules=(
+                    RedefinesRule(value="C", variant="A"),
+                    RedefinesRule(value="K", variant="B"),
+                ),
+            ),
+        },
+    )
+    assert "public sealed interface AOverlay permits A, B {}" in out
+    assert "public static final class A implements AOverlay {" in out
+    assert "public static final class B implements AOverlay {" in out
+    assert "public AOverlay getA() {" in out
+    assert "var discriminator = getT();" in out
+    assert 'if (discriminator.equals("C")) {' in out
+    assert "return new A(buf);" in out
+    assert 'if (discriminator.equals("K")) {' in out
+    assert "return new B(buf);" in out
+    assert (
+        'throw new IllegalArgumentException("getA: discriminator " + discriminator + '
+        '" matches no configured variant");' in out
+    )
+    # B is reachable only through the dispatcher, never as its own
+    # accessor on Rec.
+    assert "public B getB()" not in out
+
+
+def test_redefines_dispatch_with_numeric_discriminator_uses_a_bare_literal() -> None:
+    out = _generate_with_redefines(
+        "01 REC.\n  05 REC-TYPE PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+        "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+        {
+            "A": RedefinesDispatch(
+                discriminator="REC-TYPE",
+                rules=(
+                    RedefinesRule(value="1", variant="A"),
+                    RedefinesRule(value="2", variant="B"),
+                ),
+            ),
+        },
+    )
+    assert "var discriminator = getRecType();" in out
+    assert "if (discriminator == 1) {" in out
+    assert "if (discriminator == 2) {" in out
+
+
+def test_redefines_dispatch_leaf_target_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="requires a group"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A PIC 9(3).\n  05 B REDEFINES A PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_leaf_sibling_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="requires a group"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_combined_with_occurs_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="combined with OCCURS"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A OCCURS 2 TIMES.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(6).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_unknown_rule_variant_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="neither the target nor"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "ZZZ")))},
+        )
+
+
+def test_redefines_dispatch_discriminator_not_a_sibling_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="isn't a sibling field"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("NOPE", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_group_discriminator_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="single elementary"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T.\n    10 Z PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("1", "A"), RedefinesRule("2", "B")))},
+        )
+
+
+def test_redefines_dispatch_invalid_numeric_rule_value_is_unsupported() -> None:
+    with pytest.raises(UnsupportedDecodeError, match="isn't a valid integer"):
+        _generate_with_redefines(
+            "01 REC.\n  05 T PIC 9(1).\n  05 A.\n    10 X PIC 9(3).\n"
+            "  05 B REDEFINES A.\n    10 Y PIC X(3).",
+            {"A": RedefinesDispatch("T", (RedefinesRule("abc", "A"), RedefinesRule("2", "B")))},
+        )
 
 
 def test_nested_group_gets_its_own_static_class_and_accessor() -> None:

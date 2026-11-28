@@ -163,7 +163,44 @@ freshly computed `newBase` - still one small heap allocation per
 call, as every nested-group accessor already was. Indexing is
 0-based, matching `generate_java()`'s own `[N]Type` array convention,
 same as Go's.
+
+Eighth slice: REDEFINES dispatch, mirroring go_decoder.py's own eighth
+slice's RedefinesRule/RedefinesDispatch shape exactly (imported
+directly from go_decoder.py, not duplicated - the shape is entirely
+language-agnostic: a discriminator name, and value->variant rules).
+Where Go's own mechanism is "interface+type-switch" (no sealed-
+interface language feature to reach for), Java actually has one -
+ADR 0009's own context names a *sealed interface* for Java
+specifically - so this slice uses it for real: `public sealed
+interface {Target}Overlay permits A, B {}`, with every named view's
+class declared `public static final class A implements {Target}Overlay`.
+Sealed interfaces are a Java 17+ feature; decision 0006 deliberately
+keeps the plain POJO generator at no JDK floor above 8/11, but asked
+rather than assumed whether the decoder path should inherit that same
+constraint for this one slice - resolved in favor of letting the
+decoder have its own, higher floor, since it is already a distinct
+artifact from the POJO generator and ADR 0009 names the sealed
+interface literally, not as a suggestion to work around.
+
+The dispatcher method decodes the sibling discriminator into a local
+`var` and compares it with a plain if/else chain, not a `switch` -
+deliberately, even for a numeric discriminator: Java's classic switch
+statement doesn't accept `long` as a selector type at all (unlike
+Go's own switch, which has no such restriction), and the discriminator
+could resolve to any of byte/short/int/long/String depending on its
+own PIC - an if/else chain stays correct for all five without a
+width-specific special case. A numeric rule value is normalized to a
+canonical decimal literal first (`str(int(value))`), for the exact
+Go's-own reason: avoiding Java's legacy leading-zero-means-octal
+literal syntax. Dispatch target/sibling/discriminator classes share
+the target's own `base` context unchanged (REDEFINES overlays the
+same bytes; it never reslices or shifts position), so their
+constructor call is `new Variant(buf)` or `new Variant(buf, this.base)`
+depending on whether the enclosing scope already has a `base` field -
+the identical rule plain nested-group accessors already follow.
 """
+
+import json
 
 from unbolt.datatypes.sizing import (
     is_alpha_pic,
@@ -174,7 +211,10 @@ from unbolt.datatypes.sizing import (
 )
 from unbolt.dsl.schema import Dsl, FieldNode
 from unbolt.exceptions import UnsupportedDecodeError
+from unbolt.generators.go_decoder import RedefinesDispatch, RedefinesRule
 from unbolt.generators.naming import go_field_name, java_field_name
+
+__all__ = ["RedefinesDispatch", "RedefinesRule", "generate_java_decoder"]
 
 _INTEGER_JAVA_TYPES = frozenset({"byte", "short", "int", "long"})
 _BIG_INTEGER_JAVA_TYPE = "BigInteger"
@@ -328,7 +368,9 @@ _PACKED_DECIMAL_HELPER = """private static long decodePackedDecimal(
 }"""
 
 
-def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
+def generate_java_decoder(
+    dsl: Dsl, resolved: dict[str, str], *, redefines: dict[str, RedefinesDispatch] | None = None
+) -> dict[str, str]:
     """Emit a flyweight Java decoder: one public class per DSL root,
     each wrapping a java.nio.ByteBuffer, with one getter per field
     reading directly from the buffer.
@@ -340,6 +382,12 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
             generators.resolve_mapping() (the same input generate_java()
             takes) - the flyweight decoder returns the identical Java
             type the plain POJO generator would have chosen.
+        redefines (dict[str, RedefinesDispatch] | None): REDEFINES
+            target field name -> how to pick its active overlaid view
+            at decode time (see module docstring and go_decoder.py's
+            own RedefinesDispatch, reused directly here). A REDEFINES
+            field with no entry for its target here still raises,
+            exactly as before this parameter existed.
     Returns: dict[str, str]: {ClassName: source}, one compilation unit
         per DSL root (Java allows only one public top-level type per
         file - the same reason generate_java() returns this shape).
@@ -358,13 +406,17 @@ def generate_java_decoder(dsl: Dsl, resolved: dict[str, str]) -> dict[str, str]:
         True
     """
     result: dict[str, str] = {}
+    redefines_by_target = redefines or {}
     for root in dsl.roots:
         if root.pic is not None or not root.children:
             raise UnsupportedDecodeError(
                 f"java decoder: root {root.name!r} must be a group in this slice"
             )
         needs: set[str] = set()
-        body = _render_class(root, root.name, resolved, needs, top_level=True, base=None)
+        body = _render_class(
+            root, root.name, resolved, needs, top_level=True, base=None,
+            redefines=redefines_by_target,
+        )
         helpers = []
         if "alpha" in needs:
             helpers.append(_CP037_CHARSET_FIELD)
@@ -394,6 +446,8 @@ def _render_class(
     *,
     top_level: bool,
     base: int | None,
+    redefines: dict[str, RedefinesDispatch],
+    implements_clause: str | None = None,
 ) -> str:
     """Emits one class (the root, or a nested group) - its own
     constructor, one accessor per leaf field, and, for a nested-group
@@ -411,14 +465,42 @@ def _render_class(
           original bare-absolute-offset scheme, unchanged); otherwise
           the group's own node.offset once an OCCURS ancestor has been
           entered - see the module docstring's OCCURS section.
+    redefines: see generate_java_decoder's own parameter. A direct
+        child whose own name is a key here is a REDEFINES dispatch
+        target; its overlay siblings (children whose `.redefines`
+        names that same target) are rendered as part of its dispatch
+        block, not independently.
+    implements_clause: the sealed interface this class implements, for
+        a REDEFINES dispatch view only - None for every other class
+        (root, plain nested group, or OCCURS element).
     """
     class_name = go_field_name(node.name)
     keyword = "public class" if top_level else "public static class"
+    if implements_clause is not None:
+        keyword = "public static final class"
     has_base_field = base is not None
+
+    dispatch_targets = {child.name: child for child in node.children if child.name in redefines}
+    absorbed = {
+        child.name
+        for child in node.children
+        if child.redefines is not None and child.redefines in dispatch_targets
+    }
 
     accessor_blocks: list[str] = []
     nested_bodies: list[str] = []
     for child in node.children:
+        if child.name in absorbed:
+            continue
+        if child.name in dispatch_targets:
+            siblings = [c for c in node.children if c.redefines == child.name]
+            accessor_blocks.append(
+                _render_redefines_dispatch(
+                    child, siblings, node.children, field_path, resolved, needs,
+                    nested_bodies, base, redefines[child.name], redefines,
+                )
+            )
+            continue
         if child.redefines is not None:
             raise UnsupportedDecodeError(
                 f"java decoder: REDEFINES field {child.name!r} isn't supported yet"
@@ -429,7 +511,8 @@ def _render_class(
             child_base = child.offset if child.occurs is not None else base
             nested_bodies.append(
                 _render_class(
-                    child, child_path, resolved, needs, top_level=False, base=child_base
+                    child, child_path, resolved, needs, top_level=False, base=child_base,
+                    redefines=redefines,
                 )
             )
             method_name, _ = java_field_name(child.name, source_line=child.source_line)
@@ -448,7 +531,10 @@ def _render_class(
             continue
         accessor_blocks.append(_render_leaf_accessor(child, child_path, resolved, needs, base))
 
-    lines = [f"{keyword} {class_name} {{", "    private final java.nio.ByteBuffer buf;"]
+    class_decl = f"{keyword} {class_name}"
+    if implements_clause is not None:
+        class_decl += f" implements {implements_clause}"
+    lines = [f"{class_decl} {{", "    private final java.nio.ByteBuffer buf;"]
     if has_base_field:
         lines.append("    private final int base;")
     lines.append("")
@@ -501,6 +587,130 @@ def _render_occurs_group_accessor(
         f"    return new {child_class_name}(buf, newBase);\n"
         "}"
     )
+
+
+def _render_redefines_dispatch(
+    target: FieldNode,
+    overlay_siblings: list[FieldNode],
+    parent_children: tuple[FieldNode, ...],
+    field_path: str,
+    resolved: dict[str, str],
+    needs: set[str],
+    nested_bodies: list[str],
+    base: int | None,
+    dispatch: RedefinesDispatch,
+    redefines: dict[str, RedefinesDispatch],
+) -> str:
+    """Emits every overlaid view's class (implementing a sealed
+    interface), the interface itself, and one dispatcher method
+    (named after `target`) that decodes `dispatch`'s discriminator and
+    picks the active view - see the module docstring's REDEFINES
+    section for the scope this enforces (mirrors go_decoder.py's own
+    _render_redefines_dispatch almost exactly; Java's version uses a
+    sealed interface instead of a marker method, and an if/else chain
+    instead of a switch, for reasons explained there).
+    """
+    variants = [target, *overlay_siblings]
+    for variant in variants:
+        if variant.pic is not None or not variant.children:
+            raise UnsupportedDecodeError(
+                f"java decoder: REDEFINES dispatch on {variant.name!r} requires a group - "
+                "a leaf-level overlay isn't supported yet"
+            )
+        if variant.occurs is not None:
+            raise UnsupportedDecodeError(
+                f"java decoder: REDEFINES dispatch combined with OCCURS on {variant.name!r} "
+                "isn't supported yet"
+            )
+
+    variant_by_name = {variant.name: variant for variant in variants}
+    for rule in dispatch.rules:
+        if rule.variant not in variant_by_name:
+            raise UnsupportedDecodeError(
+                f"java decoder: REDEFINES dispatch for {target.name!r}: rule variant "
+                f"{rule.variant!r} is neither the target nor one of its REDEFINES siblings"
+            )
+
+    discriminator = next((c for c in parent_children if c.name == dispatch.discriminator), None)
+    if discriminator is None:
+        raise UnsupportedDecodeError(
+            f"java decoder: REDEFINES dispatch for {target.name!r}: discriminator "
+            f"{dispatch.discriminator!r} isn't a sibling field"
+        )
+    if discriminator.pic is None or discriminator.occurs is not None:
+        raise UnsupportedDecodeError(
+            f"java decoder: REDEFINES dispatch for {target.name!r}: discriminator "
+            f"{dispatch.discriminator!r} must be a single elementary, non-OCCURS field"
+        )
+    if is_edited_pic(discriminator.pic) or is_national_pic(discriminator.pic):
+        raise UnsupportedDecodeError(
+            f"java decoder: REDEFINES dispatch for {target.name!r}: edited/national "
+            f"discriminator {dispatch.discriminator!r} isn't supported"
+        )
+
+    target_class_name = go_field_name(target.name)
+    interface_name = f"{target_class_name}Overlay"
+    target_method_name, _ = java_field_name(target.name, source_line=target.source_line)
+    getter_name = f"get{target_method_name[0].upper()}{target_method_name[1:]}"
+
+    variant_class_names: dict[str, str] = {}
+    for variant in variants:
+        variant_class_name = go_field_name(variant.name)
+        variant_class_names[variant.name] = variant_class_name
+        nested_bodies.append(
+            _render_class(
+                variant, f"{field_path}.{variant.name}", resolved, needs, top_level=False,
+                base=base, redefines=redefines, implements_clause=interface_name,
+            )
+        )
+    nested_bodies.append(
+        f"public sealed interface {interface_name} permits "
+        + ", ".join(variant_class_names[v.name] for v in variants)
+        + " {}"
+    )
+
+    discriminator_is_alpha = is_alpha_pic(discriminator.pic)
+    discriminator_method_name, _ = java_field_name(
+        discriminator.name, source_line=discriminator.source_line
+    )
+    discriminator_getter = (
+        f"get{discriminator_method_name[0].upper()}{discriminator_method_name[1:]}"
+    )
+    ctor_args = "buf, this.base" if base is not None else "buf"
+
+    lines = [
+        f"public {interface_name} {getter_name}() {{",
+        f"    var discriminator = {discriminator_getter}();",
+    ]
+    for rule in dispatch.rules:
+        literal = _redefines_rule_literal(rule.value, discriminator_is_alpha, target.name)
+        variant_class_name = variant_class_names[rule.variant]
+        cond = (
+            f"discriminator.equals({literal})"
+            if discriminator_is_alpha
+            else f"discriminator == {literal}"
+        )
+        lines.append(f"    if ({cond}) {{")
+        lines.append(f"        return new {variant_class_name}({ctor_args});")
+        lines.append("    }")
+    lines.append(
+        f'    throw new IllegalArgumentException("{getter_name}: discriminator " + discriminator + '
+        '" matches no configured variant");'
+    )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _redefines_rule_literal(value: str, is_alpha: bool, target_name: str) -> str:
+    if is_alpha:
+        return json.dumps(value)
+    try:
+        return str(int(value))
+    except ValueError:
+        raise UnsupportedDecodeError(
+            f"java decoder: REDEFINES dispatch for {target_name!r}: rule value {value!r} "
+            "isn't a valid integer for its numeric discriminator"
+        ) from None
 
 
 def _runtime_position_preamble(

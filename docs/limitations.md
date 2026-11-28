@@ -208,8 +208,12 @@ dropped — never silently misconverted:
   `decode_display()`/`decode_alpha()` primitives applied by hand, per
   occurrence.
 - **Java flyweight decoder (`emit="decoder"`, `target="java"`, ADR
-  0009, Phase 10) covers `DISPLAY`/`COMP-3`/binary records, flat or
-  nested, so far — far narrower than the Go decoder's eight slices.**
+  0009, Phase 10) now covers the same construct set as the Go
+  decoder — `DISPLAY`/`COMP-3`/binary, nested groups, `BigInteger`,
+  alphanumeric, `OCCURS`, and `REDEFINES` dispatch — except `BigDecimal`
+  construction for decimal/scaled fields, which Go's own decimal
+  policy (a scaled `int64`) never needed and remains a separate,
+  still-open design question for Java specifically.**
   `generate_java_decoder()` emits one public class per DSL root (Java
   allows only one public top-level type per file, the same reason
   `generate_java()` already returns `dict[str, str]` rather than one
@@ -305,37 +309,69 @@ dropped — never silently misconverted:
   `DISPLAY`, `COMP-3`, `BINARY`, alphanumeric) needed no second copy,
   since they already just interpolate `start`/`end` wherever they
   appear. Indexing is 0-based, matching `generate_java()`'s own
-  `[N]Type` array convention, same as Go's. Not yet supported — each
-  raises `UnsupportedDecodeError` rather than guessing: a scalar
-  (non-group) root; `REDEFINES`; `COMP-1`/`COMP-2`; edited/national
-  fields; `BigInteger` on a binary field; and any other resolved Java
-  type outside the plain `byte`/`short`/`int`/`long`/`BigInteger` set
-  — `BigDecimal` (every decimal/scaled field's resolved type for
-  Java — no analogue to Go's scaled-`int64` marker exists here, so
-  this is a different, still-open design question, not a mechanical
-  lift), and `String` as a forced override onto a non-alphanumeric
-  field. Verified with real round-trips, not just compile checks:
-  `tools/compile_check` builds, **runs**, and asserts decoded values
-  from seven generated decoders (a synthetic flat `DISPLAY`-only
-  record reusing `flat_display.cpy`'s own two integer fields, minus
-  its decimal `ACCOUNT-BALANCE` field, which is out of this slice's
-  scope; a synthetic `DISPLAY`+`COMP-3`+binary record including that
-  unsigned 8-byte `BINARY` field; a synthetic record mirroring
-  `nested_groups.cpy` two levels deep; a synthetic record covering all
-  three non-default sign placements; a synthetic record covering
-  `BigInteger` across every supported usage/sign placement; a
-  synthetic record covering plain alphanumeric decode; and the real
-  `occurs_table.cpy` fixture, a leaf `OCCURS` count sibling to a group
-  `OCCURS`, including an out-of-range index — the last four reusing
-  the Go decoder's own `sign_placements`/`bigint`/`alpha`/
-  `occurs_table.cpy` sources and bytes directly) inside a real JVM
-  (`eclipse-temurin:21-jdk`), cross-checked against Python's own
-  `decode_record()` first — except the `OCCURS` case, where
-  `decode_record()` itself doesn't support `OCCURS` yet (see "Record
-  decoding" above), so its expected values are instead cross-checked
-  against the same leaf-level `decode_display()`/`decode_alpha()`
-  primitives applied by hand, per occurrence, same as the Go
-  decoder's own `OCCURS` round-trip.
+  `[N]Type` array convention, same as Go's. `REDEFINES` gets a real
+  overlay only when the caller explicitly declares how, via the same
+  `redefines: dict[str, RedefinesDispatch]` parameter `generate_go_decoder()`
+  takes — the dataclasses are imported directly from `go_decoder.py`,
+  not duplicated, since the shape (a discriminator name, and
+  value→variant rules) is entirely language-agnostic. Unlike Go, which
+  has no sealed-interface language feature and uses a marker-method
+  interface plus a type-switch, Java's decoder uses a real **sealed
+  interface** for this (`public sealed interface {Target}Overlay
+  permits A, B {}`, with every named view declared `public static
+  final class A implements {Target}Overlay`) — exactly the mechanism
+  ADR 0009 names for Java specifically. Sealed interfaces are a Java
+  17+ feature; decision 0006 deliberately keeps the plain POJO
+  generator at no JDK floor above 8/11, but the decoder was explicitly
+  allowed its own, higher floor for this slice, since it's already a
+  distinct artifact from the POJO generator. The dispatcher method
+  decodes the sibling discriminator into a local `var` and compares it
+  with a plain if/else chain rather than a `switch` — deliberately,
+  since Java's classic switch statement doesn't accept `long` as a
+  selector type at all, and the discriminator could resolve to any of
+  byte/short/int/long/`String` depending on its own PIC. A numeric
+  rule value is normalized to a canonical decimal literal first, for
+  the same reason as Go's own REDEFINES slice: avoiding Java's
+  leading-zero-means-octal literal syntax. Scoped identically to Go's
+  own REDEFINES slice: the target and every overlaid field named in a
+  rule must be a group; the discriminator must be a direct sibling, a
+  single elementary non-`OCCURS` field; `REDEFINES` combined with
+  `OCCURS` still isn't supported. Not yet supported — each raises
+  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
+  root; a `REDEFINES` field with no `redefines` entry for its target;
+  `COMP-1`/`COMP-2`; edited/national fields; `BigInteger` on a binary
+  field; and any other resolved Java type outside the plain
+  `byte`/`short`/`int`/`long`/`BigInteger` set — `BigDecimal` (every
+  decimal/scaled field's resolved type for Java — no analogue to Go's
+  scaled-`int64` marker exists here, so this is a different,
+  still-open design question, not a mechanical lift), and `String` as
+  a forced override onto a non-alphanumeric field. Verified with real
+  round-trips, not just compile checks: `tools/compile_check` builds,
+  **runs**, and asserts decoded values from eight generated decoders
+  (a synthetic flat `DISPLAY`-only record reusing `flat_display.cpy`'s
+  own two integer fields, minus its decimal `ACCOUNT-BALANCE` field,
+  which is out of this slice's scope; a synthetic
+  `DISPLAY`+`COMP-3`+binary record including that unsigned 8-byte
+  `BINARY` field; a synthetic record mirroring `nested_groups.cpy` two
+  levels deep; a synthetic record covering all three non-default sign
+  placements; a synthetic record covering `BigInteger` across every
+  supported usage/sign placement; a synthetic record covering plain
+  alphanumeric decode; the real `occurs_table.cpy` fixture, a leaf
+  `OCCURS` count sibling to a group `OCCURS`, including an
+  out-of-range index; and a synthetic record mirroring
+  `redefines_overlay.cpy`'s own overlay, minus its decimal
+  `PAYMENT-AMOUNT` field — the fourth through seventh reusing the Go
+  decoder's own `sign_placements`/`bigint`/`alpha`/`occurs_table.cpy`
+  sources and bytes directly, and the `REDEFINES` case's bytes
+  re-derived for its narrower layout and cross-checked against
+  `decode_record()` directly before being hardcoded, not reused
+  verbatim) inside a real JVM (`eclipse-temurin:21-jdk`), cross-checked
+  against Python's own `decode_record()` first — except the `OCCURS`
+  case, where `decode_record()` itself doesn't support `OCCURS` yet
+  (see "Record decoding" above), so its expected values are instead
+  cross-checked against the same leaf-level `decode_display()`/
+  `decode_alpha()` primitives applied by hand, per occurrence, same as
+  the Go decoder's own `OCCURS` round-trip.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

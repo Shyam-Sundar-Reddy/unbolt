@@ -739,13 +739,112 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, eighth slice: REDEFINES overlay dispatch,
+# via a sealed interface. A synthetic copybook mirroring
+# redefines_overlay.cpy's own CARD-DATA/CHECK-DATA overlay but without
+# its decimal PAYMENT-AMOUNT field (out of scope for Java) - so the
+# Go decoder's own already-verified bytes had to be re-derived for
+# this narrower layout (PAYMENT-AMOUNT's 9 bytes removed), not reused
+# verbatim; the re-derived bytes were cross-checked against
+# decode_record() directly before being hardcoded here.
+_JAVA_REDEFINES_SOURCE = """01 PAYMENT-RECORD.
+    05 PAYMENT-TYPE PIC X(1).
+    05 CARD-DATA.
+        10 CARD-NUMBER PIC X(16).
+        10 CARD-EXP PIC 9(4).
+    05 CHECK-DATA REDEFINES CARD-DATA.
+        10 CHECK-NUMBER PIC 9(10).
+        10 BANK-ROUTING PIC 9(9).
+"""
+
+_JAVA_REDEFINES_DISPATCH = {
+    "CARD-DATA": RedefinesDispatch(
+        discriminator="PAYMENT-TYPE",
+        rules=(
+            RedefinesRule(value="C", variant="CARD-DATA"),
+            RedefinesRule(value="K", variant="CHECK-DATA"),
+        ),
+    ),
+}
+
+_JAVA_REDEFINES_MAIN = """import java.nio.ByteBuffer;
+
+public class Main {
+\tpublic static void main(String[] args) {
+\t\tbyte[] cardData = {
+\t\t\t(byte) 0xC3, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9,
+\t\t\t(byte) 0xF0, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF1, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF5,
+\t\t};
+\t\tbyte[] checkData = {
+\t\t\t(byte) 0xD2, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9,
+\t\t\t(byte) 0xF0, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9,
+\t\t\t(byte) 0xF0,
+\t\t};
+\t\tbyte[] unknownData = {
+\t\t\t(byte) 0xE7, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF7, (byte) 0xF8, (byte) 0xF9,
+\t\t\t(byte) 0xF0, (byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4,
+\t\t\t(byte) 0xF5, (byte) 0xF6, (byte) 0xF1, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF5,
+\t\t};
+
+\t\tPaymentRecord rCard = new PaymentRecord(ByteBuffer.wrap(cardData));
+\t\tPaymentRecord.CardDataOverlay overlay = rCard.getCardData();
+\t\tif (!(overlay instanceof PaymentRecord.CardData card)) {
+\t\t\tthrow new RuntimeException("getCardData(): want CardData, got " + overlay);
+\t\t}
+\t\tif (!card.getCardNumber().equals("1234567890123456")) {
+\t\t\tthrow new RuntimeException("CardNumber: got " + card.getCardNumber());
+\t\t}
+\t\tif (card.getCardExp() != 1225) {
+\t\t\tthrow new RuntimeException("CardExp: got " + card.getCardExp());
+\t\t}
+
+\t\tPaymentRecord rCheck = new PaymentRecord(ByteBuffer.wrap(checkData));
+\t\tPaymentRecord.CardDataOverlay overlay2 = rCheck.getCardData();
+\t\tif (!(overlay2 instanceof PaymentRecord.CheckData check)) {
+\t\t\tthrow new RuntimeException("getCardData(): want CheckData, got " + overlay2);
+\t\t}
+\t\tif (check.getCheckNumber() != 1234567890L) {
+\t\t\tthrow new RuntimeException("CheckNumber: got " + check.getCheckNumber());
+\t\t}
+\t\tif (check.getBankRouting() != 123456789) {
+\t\t\tthrow new RuntimeException("BankRouting: got " + check.getBankRouting());
+\t\t}
+
+\t\tPaymentRecord rUnknown = new PaymentRecord(ByteBuffer.wrap(unknownData));
+\t\tboolean threw = false;
+\t\ttry {
+\t\t\trUnknown.getCardData();
+\t\t} catch (IllegalArgumentException e) {
+\t\t\tthrew = true;
+\t\t}
+\t\tif (!threw) {
+\t\t\tthrow new RuntimeException("getCardData() with an unmatched discriminator: want an "
+\t\t\t\t+ "exception, got none");
+\t\t}
+
+\t\tSystem.out.println("redefines Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
-    out_dir: pathlib.Path, label: str, source: str, java_main: str
+    out_dir: pathlib.Path,
+    label: str,
+    source: str,
+    java_main: str,
+    redefines: dict[str, RedefinesDispatch] | None = None,
 ) -> bool:
     dsl = build_dsl(parse_copybook(source), source_file=f"{label}.cpy")
     resolved = resolve_mapping(recommend_mappings(dsl, "java"), Overrides())
-    classes = generate_java_decoder(dsl, resolved)
+    classes = generate_java_decoder(dsl, resolved, redefines=redefines)
 
     work_dir = out_dir / f"java_decoder_{label}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -934,11 +1033,11 @@ def main() -> int:
         _REDEFINES_GO_MAIN, _REDEFINES_DISPATCH,
     )
 
-    # Java flyweight decoder (ADR 0009, Phase 10, ninth-fifteenth
+    # Java flyweight decoder (ADR 0009, Phase 10, ninth-sixteenth
     # slices): same real round-trip discipline as the Go decoder above
     # - the running binary must decode to the exact values Python's
     # own decode_record() already verified (except the OCCURS case,
-    # same caveat as the Go decoder's own OCCURS round-trip). Seven
+    # same caveat as the Go decoder's own OCCURS round-trip). Eight
     # cases: a synthetic flat DISPLAY-only record (flat_display.cpy's
     # own two integer fields, minus its decimal ACCOUNT-BALANCE field,
     # out of scope), a synthetic DISPLAY+COMP-3+binary record including
@@ -946,11 +1045,13 @@ def main() -> int:
     # nested_groups.cpy two levels deep, a synthetic record covering
     # all three non-default sign placements, a synthetic record
     # covering BigInteger across every supported usage/sign placement,
-    # a synthetic record covering plain alphanumeric decode, and the
-    # real occurs_table.cpy fixture - the last four reuse
-    # _SIGN_PLACEMENTS_SOURCE/_BIGINT_SOURCE/_ALPHA_SOURCE/
-    # occurs_table.cpy and their bytes directly from the Go decoder's
-    # own equivalent round-trips above.
+    # a synthetic record covering plain alphanumeric decode, the real
+    # occurs_table.cpy fixture, and a synthetic record mirroring
+    # redefines_overlay.cpy's own overlay (minus its decimal
+    # PAYMENT-AMOUNT field, out of scope - its bytes had to be
+    # re-derived for the narrower layout, not reused verbatim, and
+    # were cross-checked against decode_record() directly before
+    # being hardcoded).
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "flat_display", _JAVA_FLAT_DISPLAY_SOURCE, _JAVA_FLAT_DISPLAY_MAIN,
     )
@@ -971,6 +1072,10 @@ def main() -> int:
     )
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "occurs", (FIXTURES_DIR / "occurs_table.cpy").read_text(), _JAVA_OCCURS_MAIN,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "redefines", _JAVA_REDEFINES_SOURCE, _JAVA_REDEFINES_MAIN,
+        _JAVA_REDEFINES_DISPATCH,
     )
 
     shutil.rmtree(out_dir)

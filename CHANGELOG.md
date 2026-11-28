@@ -449,6 +449,37 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inside a real `eclipse-temurin:21-jdk` JVM. 5 new tests (net, after
   retiring two now-obsolete "OCCURS isn't supported" tests and adding
   seven real ones).
+- Phase 10, sixteenth slice: `REDEFINES` dispatch for the Java
+  flyweight decoder, mirroring `go_decoder.py`'s own eighth slice -
+  the `RedefinesRule`/`RedefinesDispatch` dataclasses are imported
+  directly from `go_decoder.py`, not duplicated, since their shape is
+  entirely language-agnostic. Resolved the real open question the
+  previous slice's own "still to do" note flagged - asked rather than
+  assumed whether the decoder path should be allowed a higher JDK
+  floor than decision 0006's own POJO generator, to use a Java 17+
+  sealed interface the way ADR 0009 names for Java specifically -
+  in favor of letting the decoder have its own floor, since it's
+  already a distinct artifact from the POJO generator. Unlike Go's
+  own "interface+type-switch," Java's version uses a real sealed
+  interface: `public sealed interface {Target}Overlay permits A, B {}`,
+  with every named view declared `public static final class A
+  implements {Target}Overlay`. The dispatcher decodes the sibling
+  discriminator into a local `var` and compares it with a plain
+  if/else chain rather than a `switch` - deliberately, since Java's
+  classic switch doesn't accept `long` as a selector type at all, and
+  the discriminator could resolve to any of byte/short/int/long/String
+  depending on its own PIC. A numeric rule value is normalized to a
+  canonical decimal literal first, for the same reason as Go's own
+  slice: avoiding Java's leading-zero-means-octal literal syntax.
+  Scoped identically to Go's own REDEFINES slice. `tools/compile_check`
+  gained an eighth Java decoder round-trip: a synthetic record
+  mirroring `redefines_overlay.cpy`'s own overlay, minus its decimal
+  `PAYMENT-AMOUNT` field - its bytes had to be re-derived for the
+  narrower layout and cross-checked against `decode_record()` directly
+  before being hardcoded, not reused verbatim - built and actually run
+  inside a real `eclipse-temurin:21-jdk` JVM, confirming sealed
+  interfaces and pattern-matching `instanceof` really do compile and
+  run correctly on that JVM. 9 new tests (net, all additions).
 
 ## [0.1.1] - Released 2026-10-25
 
