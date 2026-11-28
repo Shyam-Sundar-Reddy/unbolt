@@ -198,6 +198,40 @@ same bytes; it never reslices or shifts position), so their
 constructor call is `new Variant(buf)` or `new Variant(buf, this.base)`
 depending on whether the enclosing scope already has a `base` field -
 the identical rule plain nested-group accessors already follow.
+
+Ninth slice: BigDecimal construction for decimal/scaled fields - the
+one item go_decoder.py's own eight slices never needed (decision
+0002's Go policy is a scaled int64 with the scale tracked only as a
+comment, not a real part of the Go type), because decision 0002 itself
+already says Java has no equivalent gap: java_rules.py's decimal
+ladder resolves every scale > 0 field to BigDecimal unconditionally,
+regardless of usage or whether the unscaled magnitude would fit a
+native long - so unlike the fifth slice's BigInteger (which BINARY
+never reaches, since every BINARY tier's own digit ceiling already
+fits its native signed type), a *decimal* BINARY field does reach this
+slice. The unscaled magnitude is decoded with exactly the fifth
+slice's own machinery - decodeDisplayDigitsBig/decodePackedDecimalBig
+for DISPLAY/COMP-3, a plain native read (short/int/long, masked and
+widened the same way the second slice's unsigned BINARY path already
+is) for COMP/COMP-4/COMP-5/BINARY - then wrapped with `new
+java.math.BigDecimal(unscaled, scale)`, where `scale` is the DSL's own
+FieldNode.scale (fractional-digit count), a codegen-time literal
+baked straight into the generated source, never computed at runtime.
+Unlike Go's int64, where the scale has to live in a side comment
+because int64 itself carries no scale, BigDecimal tracks its own scale
+natively - so this slice needs no documentation-only comment the way
+decision 0002's own consequences section describes for Go.
+
+New dedicated body generators (`_unsigned_display_body_bigdecimal` and
+its signed/leading/separate-sign/packed/binary siblings, each with an
+"_occurs" twin where offset arithmetic is involved, mirroring the
+fifth and seventh slices' own pattern exactly) parallel the existing
+BigInteger-returning ones body-for-body, differing only in their final
+return expression(s) (`return new java.math.BigDecimal(v, scale);`
+instead of `return v;`) - written as separate functions rather than
+retrofitting the existing, already round-trip-verified BigInteger
+functions with an optional scale parameter, so this slice touches zero
+previously-tested code paths.
 """
 
 import json
@@ -218,6 +252,7 @@ __all__ = ["RedefinesDispatch", "RedefinesRule", "generate_java_decoder"]
 
 _INTEGER_JAVA_TYPES = frozenset({"byte", "short", "int", "long"})
 _BIG_INTEGER_JAVA_TYPE = "BigInteger"
+_BIG_DECIMAL_JAVA_TYPE = "BigDecimal"
 _BINARY_WIDTH_READER = {2: "getShort", 4: "getInt", 8: "getLong"}
 _BINARY_NATIVE_TYPE = {2: "short", 4: "int", 8: "long"}
 _UNSIGNED_WIDEN_MASK = {2: "0xFFFF", 4: "0xFFFFFFFFL"}
@@ -782,10 +817,18 @@ def _render_leaf_accessor(
         return _render_alpha_accessor(getter_name, start, end)
 
     java_type = resolved[field_path]
-    if java_type != _BIG_INTEGER_JAVA_TYPE and java_type not in _INTEGER_JAVA_TYPES:
+    if (
+        java_type not in (_BIG_INTEGER_JAVA_TYPE, _BIG_DECIMAL_JAVA_TYPE)
+        and java_type not in _INTEGER_JAVA_TYPES
+    ):
         raise UnsupportedDecodeError(
             f"java decoder: resolved type {java_type!r} for {field_path!r} isn't supported "
-            "in this slice (only byte/short/int/long/BigInteger)"
+            "in this slice (only byte/short/int/long/BigInteger/BigDecimal)"
+        )
+
+    if java_type == _BIG_DECIMAL_JAVA_TYPE:
+        return _render_bigdecimal_leaf_accessor(
+            node, getter_name, base, occurs, rel_start, needs, node.scale
         )
 
     if java_type == _BIG_INTEGER_JAVA_TYPE:
@@ -925,6 +968,273 @@ def _render_bigint_leaf_accessor(
             f"this slice, got {node.usage!r} for {node.name!r}"
         )
     return f"public java.math.BigInteger {getter_name}() {{\n" + body + "}"
+
+
+def _render_bigdecimal_leaf_accessor(
+    node: FieldNode,
+    getter_name: str,
+    base: int | None,
+    occurs: int | None,
+    rel_start: int,
+    needs: set[str],
+    scale: int,
+) -> str:
+    # Every decimal (scale > 0) field resolves to BigDecimal regardless
+    # of usage or magnitude (java_rules.py's own decimal ladder has only
+    # one valid candidate) - unlike the BigInteger accessor above, which
+    # BINARY never reaches (every BINARY tier's own digit ceiling always
+    # fits its native signed type, so a *plain* integer field never
+    # needs BigInteger). A *decimal* BINARY field still needs BigDecimal
+    # for its scale, even though its unscaled magnitude fits a native
+    # long - so BINARY is in scope here, read via the exact same
+    # _binary_body machinery the integer ladder already uses, then
+    # widened into a BigInteger before the final BigDecimal wrap.
+    runtime = base is not None or occurs is not None
+    params = "int index" if occurs is not None else ""
+
+    if runtime:
+        preamble = _runtime_position_preamble(node.name, base, occurs, rel_start, node.byte_size)
+        if is_packed_usage(node.usage):
+            needs.add("bigint_packed")
+            body = _packed_body_bigdecimal("start", "end", node.digits, scale)
+        elif is_binary_usage(node.usage):
+            body = _binary_body_bigdecimal("start", node.byte_size, node.signed, scale)
+        elif node.usage.upper() == "DISPLAY":
+            needs.add("bigint_display")
+            if not node.signed:
+                body = _unsigned_display_body_bigdecimal("start", "end", scale)
+            elif node.sign_separate:
+                body = _separate_sign_display_body_bigdecimal_occurs(
+                    node.name, node.sign_leading, scale
+                )
+            elif node.sign_leading:
+                body = _leading_overpunch_display_body_bigdecimal_occurs(node.name, scale)
+            else:
+                body = _signed_display_body_bigdecimal_occurs(node.name, scale)
+        else:
+            raise UnsupportedDecodeError(
+                f"java decoder: only DISPLAY/COMP-3/binary fields are supported in this "
+                f"slice, got {node.usage!r} for {node.name!r}"
+            )
+        return (
+            f"public java.math.BigDecimal {getter_name}({params}) {{\n" + preamble + body + "}"
+        )
+
+    start, end = node.offset, node.offset + node.byte_size
+    if is_packed_usage(node.usage):
+        needs.add("bigint_packed")
+        body = _packed_body_bigdecimal(start, end, node.digits, scale)
+    elif is_binary_usage(node.usage):
+        body = _binary_body_bigdecimal(start, node.byte_size, node.signed, scale)
+    elif node.usage.upper() == "DISPLAY":
+        needs.add("bigint_display")
+        if not node.signed:
+            body = _unsigned_display_body_bigdecimal(start, end, scale)
+        elif node.sign_separate:
+            body = _separate_sign_display_body_bigdecimal(
+                node.name, start, end, node.sign_leading, scale
+            )
+        elif node.sign_leading:
+            body = _leading_overpunch_display_body_bigdecimal(node.name, start, end, scale)
+        else:
+            body = _signed_display_body_bigdecimal(node.name, start, end, scale)
+    else:
+        raise UnsupportedDecodeError(
+            f"java decoder: only DISPLAY/COMP-3/binary fields are supported in this "
+            f"slice, got {node.usage!r} for {node.name!r}"
+        )
+    return f"public java.math.BigDecimal {getter_name}() {{\n" + body + "}"
+
+
+def _unsigned_display_body_bigdecimal(start: int | str, end: int | str, scale: int) -> str:
+    return (
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {start}, {end});\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _signed_display_body_bigdecimal(field_label: str, start: int, end: int, scale: int) -> str:
+    return (
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {start}, {end - 1});\n"
+        f"    int last = buf.get({end - 1}) & 0xFF;\n"
+        "    int zone = last & 0xF0;\n"
+        "    int digit = last & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    v = v.multiply(java.math.BigInteger.TEN).add(java.math.BigInteger.valueOf(digit));\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _leading_overpunch_display_body_bigdecimal(
+    field_label: str, start: int, end: int, scale: int
+) -> str:
+    return (
+        f"    int first = buf.get({start}) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        f"    java.math.BigInteger tail = decodeDisplayDigitsBig(buf, {start + 1}, {end});\n"
+        f"    java.math.BigInteger tenPow = java.math.BigInteger.TEN.pow({end - start - 1});\n"
+        "    java.math.BigInteger v = java.math.BigInteger.valueOf(digit).multiply(tenPow)"
+        ".add(tail);\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _separate_sign_display_body_bigdecimal(
+    field_label: str, start: int, end: int, sign_leading: bool, scale: int
+) -> str:
+    if sign_leading:
+        sign_pos, digits_start, digits_end = start, start + 1, end
+    else:
+        sign_pos, digits_start, digits_end = end - 1, start, end - 1
+    return (
+        f"    int sign = buf.get({sign_pos}) & 0xFF;\n"
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {digits_start}, "
+        f"{digits_end});\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        f"            return new java.math.BigDecimal(v, {scale});\n"
+        "        case 0x60:\n"
+        f"            return new java.math.BigDecimal(v.negate(), {scale});\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
+    )
+
+
+def _signed_display_body_bigdecimal_occurs(field_label: str, scale: int) -> str:
+    return (
+        "    java.math.BigInteger v = decodeDisplayDigitsBig(buf, start, end - 1);\n"
+        "    int last = buf.get(end - 1) & 0xFF;\n"
+        "    int zone = last & 0xF0;\n"
+        "    int digit = last & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    v = v.multiply(java.math.BigInteger.TEN).add(java.math.BigInteger.valueOf(digit));\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: last byte " + '
+        'String.format("0x%02X", last) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _leading_overpunch_display_body_bigdecimal_occurs(field_label: str, scale: int) -> str:
+    return (
+        "    int first = buf.get(start) & 0xFF;\n"
+        "    int zone = first & 0xF0;\n"
+        "    int digit = first & 0x0F;\n"
+        "    if (digit > 9) {\n"
+        f'        throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has a non-digit value nibble " + digit);\n'
+        "    }\n"
+        "    java.math.BigInteger tail = decodeDisplayDigitsBig(buf, start + 1, end);\n"
+        "    java.math.BigInteger tenPow = java.math.BigInteger.TEN.pow(end - start - 1);\n"
+        "    java.math.BigInteger v = java.math.BigInteger.valueOf(digit).multiply(tenPow)"
+        ".add(tail);\n"
+        "    switch (zone) {\n"
+        "        case 0xC0:\n"
+        "        case 0xF0:\n"
+        "            break;\n"
+        "        case 0xD0:\n"
+        "            v = v.negate();\n"
+        "            break;\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: first byte " + '
+        'String.format("0x%02X", first) + " has an unrecognized sign nibble " + '
+        'String.format("0x%02X", zone));\n'
+        "    }\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _separate_sign_display_body_bigdecimal_occurs(
+    field_label: str, sign_leading: bool, scale: int
+) -> str:
+    if sign_leading:
+        sign_expr, digits_start, digits_end = "start", "start + 1", "end"
+    else:
+        sign_expr, digits_start, digits_end = "end - 1", "start", "end - 1"
+    return (
+        f"    int sign = buf.get({sign_expr}) & 0xFF;\n"
+        f"    java.math.BigInteger v = decodeDisplayDigitsBig(buf, {digits_start}, "
+        f"{digits_end});\n"
+        "    switch (sign) {\n"
+        "        case 0x4E:\n"
+        f"            return new java.math.BigDecimal(v, {scale});\n"
+        "        case 0x60:\n"
+        f"            return new java.math.BigDecimal(v.negate(), {scale});\n"
+        "        default:\n"
+        f'            throw new IllegalArgumentException("{field_label}: separate sign byte " + '
+        'String.format("0x%02X", sign) + " is not \'+\' or \'-\'");\n'
+        "    }\n"
+    )
+
+
+def _packed_body_bigdecimal(start: int | str, end: int | str, digits: int, scale: int) -> str:
+    return (
+        f"    java.math.BigInteger v = decodePackedDecimalBig(buf, {start}, {end}, {digits});\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
+
+
+def _binary_body_bigdecimal(start: int | str, byte_size: int, signed: bool, scale: int) -> str:
+    reader = _BINARY_WIDTH_READER[byte_size]
+    native_type = _BINARY_NATIVE_TYPE[byte_size]
+    mask = None if signed else _UNSIGNED_WIDEN_MASK.get(byte_size)
+    if mask is None:
+        return (
+            f"    {native_type} raw = buf.{reader}({start});\n"
+            "    java.math.BigInteger v = java.math.BigInteger.valueOf(raw);\n"
+            f"    return new java.math.BigDecimal(v, {scale});\n"
+        )
+    return (
+        f"    {native_type} raw = buf.{reader}({start});\n"
+        f"    java.math.BigInteger v = java.math.BigInteger.valueOf(raw & {mask});\n"
+        f"    return new java.math.BigDecimal(v, {scale});\n"
+    )
 
 
 def _unsigned_display_body_big(start: int | str, end: int | str) -> str:

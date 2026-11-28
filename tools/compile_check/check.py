@@ -834,6 +834,59 @@ public class Main {
 }
 """
 
+# Java flyweight decoder, ninth slice: BigDecimal construction for
+# decimal/scaled fields - a genuinely new copybook (Go's own decoder
+# never needed a BigDecimal round-trip at all, per decision 0002), so
+# these bytes are derived fresh, not reused from any existing round-
+# trip, and cross-checked against decode_record() directly (printed
+# below) before being hardcoded here:
+#   REC.UNSIGNED-DEC = 123.45    REC.SIGNED-DEC = -123.45
+#   REC.LEADING-DEC = -987.65    REC.SEP-TRAIL-DEC = 111.11
+#   REC.SEP-LEAD-DEC = -222.22   REC.PACKED-DEC = -999.99
+#   REC.BINARY-DEC = 123.45
+_JAVA_BIGDECIMAL_SOURCE = """01 REC.
+    05 UNSIGNED-DEC PIC 9(3)V99.
+    05 SIGNED-DEC PIC S9(3)V99.
+    05 LEADING-DEC PIC S9(3)V99 SIGN IS LEADING.
+    05 SEP-TRAIL-DEC PIC S9(3)V99 SIGN IS SEPARATE.
+    05 SEP-LEAD-DEC PIC S9(3)V99 SIGN IS LEADING SEPARATE.
+    05 PACKED-DEC PIC S9(3)V99 COMP-3.
+    05 BINARY-DEC PIC S9(3)V99 COMP.
+"""
+
+_JAVA_BIGDECIMAL_MAIN = """import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+
+public class Main {
+\tprivate static void check(String name, BigDecimal got, String want) {
+\t\tif (!got.equals(new BigDecimal(want))) {
+\t\t\tthrow new RuntimeException(name + ": got " + got + ", want " + want);
+\t\t}
+\t}
+
+\tpublic static void main(String[] args) {
+\t\tbyte[] data = {
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xF5,
+\t\t\t(byte) 0xF1, (byte) 0xF2, (byte) 0xF3, (byte) 0xF4, (byte) 0xD5,
+\t\t\t(byte) 0xD9, (byte) 0xF8, (byte) 0xF7, (byte) 0xF6, (byte) 0xF5,
+\t\t\t(byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1, (byte) 0xF1,
+\t\t\t(byte) 0x4E, (byte) 0x60, (byte) 0xF2, (byte) 0xF2, (byte) 0xF2,
+\t\t\t(byte) 0xF2, (byte) 0xF2, (byte) 0x99, (byte) 0x99, (byte) 0x9D,
+\t\t\t(byte) 0x00, (byte) 0x00, (byte) 0x30, (byte) 0x39,
+\t\t};
+\t\tRec r = new Rec(ByteBuffer.wrap(data));
+\t\tcheck("UnsignedDec", r.getUnsignedDec(), "123.45");
+\t\tcheck("SignedDec", r.getSignedDec(), "-123.45");
+\t\tcheck("LeadingDec", r.getLeadingDec(), "-987.65");
+\t\tcheck("SepTrailDec", r.getSepTrailDec(), "111.11");
+\t\tcheck("SepLeadDec", r.getSepLeadDec(), "-222.22");
+\t\tcheck("PackedDec", r.getPackedDec(), "-999.99");
+\t\tcheck("BinaryDec", r.getBinaryDec(), "123.45");
+\t\tSystem.out.println("bigdecimal Java decoder round-trip: OK");
+\t}
+}
+"""
+
 
 def _check_java_decoder_roundtrip(
     out_dir: pathlib.Path,
@@ -1076,6 +1129,9 @@ def main() -> int:
     ok = ok and _check_java_decoder_roundtrip(
         out_dir, "redefines", _JAVA_REDEFINES_SOURCE, _JAVA_REDEFINES_MAIN,
         _JAVA_REDEFINES_DISPATCH,
+    )
+    ok = ok and _check_java_decoder_roundtrip(
+        out_dir, "bigdecimal", _JAVA_BIGDECIMAL_SOURCE, _JAVA_BIGDECIMAL_MAIN,
     )
 
     shutil.rmtree(out_dir)

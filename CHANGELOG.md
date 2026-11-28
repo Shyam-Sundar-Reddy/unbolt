@@ -480,6 +480,34 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inside a real `eclipse-temurin:21-jdk` JVM, confirming sealed
   interfaces and pattern-matching `instanceof` really do compile and
   run correctly on that JVM. 9 new tests (net, all additions).
+- Phase 10, seventeenth slice: `BigDecimal` construction for decimal/
+  scaled fields in the Java flyweight decoder - the one item Go's own
+  eight decoder slices never needed, since decision 0002 already says
+  Java has no equivalent gap (Go's own policy is a scaled `int64` with
+  the scale tracked only as a side comment; `BigDecimal` tracks its
+  own scale natively). A genuinely new design question, not a port of
+  anything Go already decided - **this completes Phase 10 for both
+  languages**. `java_rules.py`'s own decimal ladder resolves every
+  `scale > 0` field to `BigDecimal` unconditionally, regardless of
+  usage or magnitude - so, unlike `BigInteger` (which `BINARY` never
+  reaches), a *decimal* `BINARY` field does reach this slice. The
+  unscaled magnitude is decoded with the fifth slice's own machinery
+  (`decodeDisplayDigitsBig`/`decodePackedDecimalBig` for
+  `DISPLAY`/`COMP-3`, a plain native `ByteBuffer` read for
+  `COMP`/`COMP-4`/`COMP-5`/`BINARY`), then wrapped with `new
+  java.math.BigDecimal(unscaled, scale)`, where `scale` is the DSL's
+  own `FieldNode.scale`, a codegen-time literal. New, dedicated body
+  generators parallel the existing `BigInteger`-returning ones
+  body-for-body, differing only in their final return expression -
+  written as separate functions rather than retrofitting the already
+  round-trip-verified `BigInteger` functions, so this slice touched
+  zero previously-tested code paths. `tools/compile_check` gained a
+  ninth Java decoder round-trip: a fresh synthetic record (no Go
+  equivalent exists) covering every sign placement/usage including a
+  decimal `BINARY` field, with bytes cross-checked against
+  `decode_record()` directly before being hardcoded, built and
+  actually run inside a real `eclipse-temurin:21-jdk` JVM. 8 new tests
+  (net: 9 added, 1 obsolete "BigDecimal isn't supported" test retired).
 
 ## [0.1.1] - Released 2026-10-25
 

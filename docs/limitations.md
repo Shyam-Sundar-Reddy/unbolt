@@ -210,10 +210,13 @@ dropped — never silently misconverted:
 - **Java flyweight decoder (`emit="decoder"`, `target="java"`, ADR
   0009, Phase 10) now covers the same construct set as the Go
   decoder — `DISPLAY`/`COMP-3`/binary, nested groups, `BigInteger`,
-  alphanumeric, `OCCURS`, and `REDEFINES` dispatch — except `BigDecimal`
-  construction for decimal/scaled fields, which Go's own decimal
-  policy (a scaled `int64`) never needed and remains a separate,
-  still-open design question for Java specifically.**
+  alphanumeric, `OCCURS`, `REDEFINES` dispatch, and `BigDecimal`
+  construction for decimal/scaled fields — the last of which has no
+  analogue in the Go decoder at all (Go's own decimal policy, decision
+  0002, is a scaled `int64` with the scale tracked only as a comment,
+  never a real part of the Go decoder's own type), so this was a
+  genuinely new design question for Java, not a port of anything Go
+  already decided.**
   `generate_java_decoder()` emits one public class per DSL root (Java
   allows only one public top-level type per file, the same reason
   `generate_java()` already returns `dict[str, str]` rather than one
@@ -336,42 +339,66 @@ dropped — never silently misconverted:
   own REDEFINES slice: the target and every overlaid field named in a
   rule must be a group; the discriminator must be a direct sibling, a
   single elementary non-`OCCURS` field; `REDEFINES` combined with
-  `OCCURS` still isn't supported. Not yet supported — each raises
-  `UnsupportedDecodeError` rather than guessing: a scalar (non-group)
-  root; a `REDEFINES` field with no `redefines` entry for its target;
-  `COMP-1`/`COMP-2`; edited/national fields; `BigInteger` on a binary
-  field; and any other resolved Java type outside the plain
-  `byte`/`short`/`int`/`long`/`BigInteger` set — `BigDecimal` (every
-  decimal/scaled field's resolved type for Java — no analogue to Go's
-  scaled-`int64` marker exists here, so this is a different,
-  still-open design question, not a mechanical lift), and `String` as
-  a forced override onto a non-alphanumeric field. Verified with real
-  round-trips, not just compile checks: `tools/compile_check` builds,
-  **runs**, and asserts decoded values from eight generated decoders
-  (a synthetic flat `DISPLAY`-only record reusing `flat_display.cpy`'s
-  own two integer fields, minus its decimal `ACCOUNT-BALANCE` field,
-  which is out of this slice's scope; a synthetic
-  `DISPLAY`+`COMP-3`+binary record including that unsigned 8-byte
-  `BINARY` field; a synthetic record mirroring `nested_groups.cpy` two
-  levels deep; a synthetic record covering all three non-default sign
-  placements; a synthetic record covering `BigInteger` across every
-  supported usage/sign placement; a synthetic record covering plain
-  alphanumeric decode; the real `occurs_table.cpy` fixture, a leaf
-  `OCCURS` count sibling to a group `OCCURS`, including an
-  out-of-range index; and a synthetic record mirroring
-  `redefines_overlay.cpy`'s own overlay, minus its decimal
-  `PAYMENT-AMOUNT` field — the fourth through seventh reusing the Go
-  decoder's own `sign_placements`/`bigint`/`alpha`/`occurs_table.cpy`
-  sources and bytes directly, and the `REDEFINES` case's bytes
-  re-derived for its narrower layout and cross-checked against
-  `decode_record()` directly before being hardcoded, not reused
-  verbatim) inside a real JVM (`eclipse-temurin:21-jdk`), cross-checked
-  against Python's own `decode_record()` first — except the `OCCURS`
-  case, where `decode_record()` itself doesn't support `OCCURS` yet
-  (see "Record decoding" above), so its expected values are instead
-  cross-checked against the same leaf-level `decode_display()`/
-  `decode_alpha()` primitives applied by hand, per occurrence, same as
-  the Go decoder's own `OCCURS` round-trip.
+  `OCCURS` still isn't supported. Every decimal (`scale > 0`) field
+  resolves to `BigDecimal` for Java unconditionally
+  (`java_rules.py`'s own decimal ladder has only one valid
+  candidate), regardless of usage or whether the unscaled magnitude
+  would fit a native integer type — so, unlike `BigInteger` above
+  (which `BINARY` never reaches, since every `BINARY` tier's own digit
+  ceiling already fits its native signed type), a *decimal* `BINARY`
+  field does reach `BigDecimal`. The unscaled magnitude is decoded with
+  exactly the same machinery as the `BigInteger` fifth slice —
+  `decodeDisplayDigitsBig`/`decodePackedDecimalBig` for
+  `DISPLAY`/`COMP-3`, a plain native `ByteBuffer` read (masked and
+  widened the same way an unsigned `BINARY` field already is) for
+  `COMP`/`COMP-4`/`COMP-5`/`BINARY` — then wrapped with `new
+  java.math.BigDecimal(unscaled, scale)`, where `scale` is the DSL's
+  own `FieldNode.scale` (fractional-digit count), a codegen-time
+  literal baked straight into the generated source. Unlike Go's
+  `int64`, which carries no scale at all (so decision 0002's own
+  consequences section documents it only in a side comment),
+  `BigDecimal` tracks its own scale natively, so no comment is needed.
+  New, dedicated body generators (one per sign placement/usage, each
+  with an `_occurs` twin where offset arithmetic is involved) parallel
+  the existing `BigInteger`-returning ones body-for-body, differing
+  only in their final return expression — written as separate
+  functions rather than retrofitting the already round-trip-verified
+  `BigInteger` functions with an optional scale parameter, so this
+  slice touched zero previously-tested code paths. Not yet supported —
+  each raises `UnsupportedDecodeError` rather than guessing: a scalar
+  (non-group) root; a `REDEFINES` field with no `redefines` entry for
+  its target; `COMP-1`/`COMP-2`; edited/national fields; `BigInteger`
+  on a binary field; and any other resolved Java type outside the
+  plain `byte`/`short`/`int`/`long`/`BigInteger`/`BigDecimal` set, and
+  `String` as a forced override onto a non-alphanumeric field. Verified
+  with real round-trips, not just compile checks: `tools/compile_check`
+  builds, **runs**, and asserts decoded values from nine generated
+  decoders (a synthetic flat `DISPLAY`-only record reusing
+  `flat_display.cpy`'s own two integer fields, minus its decimal
+  `ACCOUNT-BALANCE` field, which is out of this slice's scope; a
+  synthetic `DISPLAY`+`COMP-3`+binary record including that unsigned
+  8-byte `BINARY` field; a synthetic record mirroring
+  `nested_groups.cpy` two levels deep; a synthetic record covering all
+  three non-default sign placements; a synthetic record covering
+  `BigInteger` across every supported usage/sign placement; a
+  synthetic record covering plain alphanumeric decode; the real
+  `occurs_table.cpy` fixture, a leaf `OCCURS` count sibling to a group
+  `OCCURS`, including an out-of-range index; a synthetic record
+  mirroring `redefines_overlay.cpy`'s own overlay, minus its decimal
+  `PAYMENT-AMOUNT` field; and a synthetic record covering `BigDecimal`
+  across every supported usage/sign placement, including a decimal
+  `BINARY` field — the fourth through seventh reusing the Go decoder's
+  own `sign_placements`/`bigint`/`alpha`/`occurs_table.cpy` sources and
+  bytes directly, and the `REDEFINES` and `BigDecimal` cases' bytes
+  freshly derived and cross-checked against `decode_record()` directly
+  before being hardcoded, not reused verbatim) inside a real JVM
+  (`eclipse-temurin:21-jdk`), cross-checked against Python's own
+  `decode_record()` first — except the `OCCURS` case, where
+  `decode_record()` itself doesn't support `OCCURS` yet (see "Record
+  decoding" above), so its expected values are instead cross-checked
+  against the same leaf-level `decode_display()`/`decode_alpha()`
+  primitives applied by hand, per occurrence, same as the Go decoder's
+  own `OCCURS` round-trip.
 
 ## Compatibility classification (`unbolt.variants`, Phase 9)
 

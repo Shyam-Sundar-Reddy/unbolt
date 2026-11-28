@@ -456,9 +456,69 @@ def test_big_integer_binary_field_is_unsupported() -> None:
         generate_java_decoder(dsl, resolved)
 
 
-def test_decimal_field_resolving_to_bigdecimal_is_unsupported() -> None:
-    with pytest.raises(UnsupportedDecodeError, match="isn't supported in this slice"):
-        _generate("01 REC.\n  05 A PIC S9(5)V99.")
+def test_unsigned_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(5)V99.")["Rec"]
+    assert "public java.math.BigDecimal getA() {" in out
+    assert "java.math.BigInteger v = decodeDisplayDigitsBig(buf, 0, 7);" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_trailing_overpunch_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99.")["Rec"]
+    assert "java.math.BigInteger v = decodeDisplayDigitsBig(buf, 0, 6);" in out
+    assert "v = v.negate();" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_leading_overpunch_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 SIGN IS LEADING.")["Rec"]
+    assert "java.math.BigInteger tail = decodeDisplayDigitsBig(buf, 1, 7);" in out
+    assert "java.math.BigInteger tenPow = java.math.BigInteger.TEN.pow(6);" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_trailing_separate_sign_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 SIGN IS SEPARATE.")["Rec"]
+    assert "int sign = buf.get(7) & 0xFF;" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+    assert "return new java.math.BigDecimal(v.negate(), 2);" in out
+
+
+def test_leading_separate_sign_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 SIGN IS LEADING SEPARATE.")["Rec"]
+    assert "int sign = buf.get(0) & 0xFF;" in out
+
+
+def test_packed_decimal_field_decodes_to_bigdecimal() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 COMP-3.")["Rec"]
+    assert "java.math.BigInteger v = decodePackedDecimalBig(buf, 0, 4, 7);" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_binary_decimal_field_decodes_to_bigdecimal_unlike_plain_biginteger() -> None:
+    # Unlike a plain integer field (where BINARY never reaches
+    # BigInteger - every BINARY tier's digit ceiling already fits its
+    # native signed type), a *decimal* BINARY field still needs
+    # BigDecimal for its scale even though the unscaled magnitude fits
+    # a native int/long - so this case, unlike
+    # test_big_integer_binary_field_is_unsupported above, succeeds.
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 COMP.")["Rec"]
+    assert "int raw = buf.getInt(0);" in out
+    assert "java.math.BigInteger v = java.math.BigInteger.valueOf(raw);" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_leaf_occurs_on_decimal_field_works() -> None:
+    out = _generate("01 REC.\n  05 A PIC S9(5)V99 OCCURS 3 TIMES.")["Rec"]
+    assert "public java.math.BigDecimal getA(int index) {" in out
+    assert "int start = index * 7;" in out
+    assert "java.math.BigInteger v = decodeDisplayDigitsBig(buf, start, end - 1);" in out
+    assert "return new java.math.BigDecimal(v, 2);" in out
+
+
+def test_decimal_field_with_an_unsigned_override_still_uses_the_unsigned_body() -> None:
+    out = _generate("01 REC.\n  05 A PIC 9(3)V99.")["Rec"]
+    assert "zone" not in out
 
 
 def test_forced_string_override_is_unsupported() -> None:
